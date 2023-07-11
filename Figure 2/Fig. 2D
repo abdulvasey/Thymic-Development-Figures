@@ -1,12 +1,78 @@
 library(tidyverse)
 library(Seurat)
 
+### refer to file:'SCENIC Setup and RUN' for details
+reg_motif <- read_csv("hori_scenic.csv")
+
+srt_motif <- reg_motif %>% 
+  column_to_rownames("Cell") %>% 
+  rename_all(~str_remove(., "\\(\\+\\)")) %>% 
+  as.matrix() %>% 
+  Matrix::Matrix(sparse = T) %>% 
+  Matrix::t()
+
+q<- as.data.frame(srt_motif)
+
+
+srt_motif <- CreateSeuratObject(counts = srt_motif)
+
+srt_motif <- NormalizeData(srt_motif,normalization.method = "CLR")
+srt_motif <- FindVariableFeatures(srt_motif)
+srt_motif <- ScaleData(srt_motif)
+srt_motif <- RunPCA(srt_motif, features = VariableFeatures(srt_motif))
+srt_motif <- FindNeighbors(srt_motif, dims = 1:20)
+srt_motif <- FindClusters(srt_motif, resolution = 0.2)
+srt_motif <- RunUMAP(srt_motif, dims = 1:20)
+
+
+meta <- read_csv("horizontal_metadata.csv")
+
+srt_motif@meta.data <- srt_motif@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  select_at(vars(!contains("cellType"))) %>% 
+  left_join(meta %>% select(barcode,cellType, cellGroup,tissue)) %>% 
+  mutate(tissue = case_when(
+    tissue == "tec" ~ "Thymus",
+    tissue == "eec" ~ "Esophagus",
+    tissue == "bec" ~ "Bronchus",
+    tissue == "lec" ~ "Lung"
+  )) %>% 
+  mutate(group_label = str_glue("{tissue}_{cellType}")) %>% 
+  column_to_rownames("barcode")
+
+srt<-srt_motif
 srt <- SetIdent(srt, value = srt@meta.data$cellType)
 srt<- subset(srt, idents="Doublets", invert=TRUE)
 srt <- SetIdent(srt, value = srt@meta.data$tissue)
 ident<- c('Thymus',"Bronchus","Lung","Esophagus")
 srt@active.ident<-factor(srt@active.ident,levels=ident)
 
+
+#### Right Panel
 new<-DimPlot(srt,cols = c( "#D95F02", "#7570B3", "#1B9E77","#E7298A"),pt.size = 0.5,combine = FALSE)
 new<-new[[1]]+ guides(colour = guide_legend(override.aes = list(size = 5), ncol = 1)) + NoAxes() + theme(legend.text = element_text(size=12))
-new$plot_env$data<-NULL
+new
+
+
+#### Left Panel
+ord<-c('mcTEC','cTEC', 'mTECI','mTECII', 'mTECIII/IV', 'TECneuro', 'TECmyo','Epithelial Basal',"Club","Goblet", 'Submucosal Gland','BTP', 'BTP Adjacent', 'Secretory',"Neuroendocrine","Suprabasal","Gastric Epithelial","Multiciliated")
+srt@active.ident<-factor(srt@active.ident,levels=ord)
+DimPlot(srt)
+
+srtn<-srt
+new.cluster.ids <- c("1","2","3","4","5","6",'7','8','9','10','11','12','13','14','15','16','17','18')
+names(new.cluster.ids) <- levels(srtn)
+srtn <- RenameIdents(srtn, new.cluster.ids)
+
+m<-DimPlot(srtn,combine=FALSE)
+z<-m[[1]][["data"]]
+df_median <- z %>% 
+  group_by_at(vars(c(ident))) %>% 
+  summarise_at(vars(contains("UMAP")), ~ median(., na.rm = T))
+cols=c('#e6194b', '#ffe119', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff', '#9a6324', 'grey', '#800000', '#000075', '#808000', '#ffd8b1', '#000075', '#808080', '#000000')
+
+p<-DimPlot(srt,combine=FALSE,cols = cols,pt.size = 0.5)
+plt<-p[[1]]
+plt<-plt + guides(colour = guide_legend(override.aes = list(size = 5), ncol = 1)) + NoAxes()+
+  geom_text_repel(data=df_median,force=1,force_pull = 0,aes(UMAP_1,UMAP_2,label=ident,bg.color = "white", bg.r = 0.25,size=40),color="black", show.legend = F)+ theme(legend.text = element_text(size=12))
+plt
