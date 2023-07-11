@@ -1,0 +1,12 @@
+library(tidyverse)
+library(Seurat)
+
+srt <- SetIdent(srt, value = srt@meta.data$cellType)
+srt<- subset(srt, idents="Doublets", invert=TRUE)
+srt <- SetIdent(srt, value = srt@meta.data$tissue)
+ident<- c('Thymus',"Bronchus","Lung","Esophagus")
+srt@active.ident<-factor(srt@active.ident,levels=ident)
+
+new<-DimPlot(srt,cols = c( "#D95F02", "#7570B3", "#1B9E77","#E7298A"),pt.size = 0.5,combine = FALSE)
+new<-new[[1]]+ guides(colour = guide_legend(override.aes = list(size = 5), ncol = 1)) + NoAxes() + theme(legend.text = element_text(size=12))
+new$plot_env$data<-NULL
