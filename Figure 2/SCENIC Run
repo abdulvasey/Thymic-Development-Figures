@@ -1,0 +1,77 @@
+##### R
+
+library(tidyverse)
+library(Seurat)
+library(tSpace)
+library(umap)
+library(SCopeLoomR)
+
+
+
+srt <- readRDS("all_red.epi.from.individual.overall.int.rds")
+
+
+meta <- read_csv("horizontal_metadata.csv")
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  select_at(vars(!contains("cellType"))) %>% 
+  left_join(meta %>% select(barcode,cellType, cellGroup)) %>% 
+  mutate(tissue = case_when(
+    samptype == "TEC" ~ "Thymus",
+    samptype == "EEC" ~ "Esophagus",
+    samptype == "BEC" ~ "Bronchus",
+    samptype == "LEC" ~ "Lung"
+  )) %>% 
+  mutate(group_label = str_glue("{tissue}_{cellType}")) %>% 
+  column_to_rownames("barcode")
+
+srt <- SetIdent(srt, value = srt@meta.data$group_label)
+
+f <-table(srt@active.ident, srt@meta.data$orig.ident)
+
+
+
+exprMat <- srt@assays$RNA@data
+cellInfo <- srt@meta.data
+
+loci1 <- which(rowSums(exprMat) > 1*.01*ncol(exprMat))
+exprMat_filter <- exprMat[loci1, ]
+
+
+loom <- build_loom("/Users/avymohd/Documents/Single Cell Analysis/SCENIC/Practice/all_hori_epi.loom", dgem=exprMat_filter)
+
+
+##### Python 3
+
+#!/bin/sh
+#SBATCH --job-name=Horizontal
+#SBATCH -N 1      # nodes requested
+#SBATCH -c 32      # cores requested
+#SBATCH --mem-per-cpu=8000
+#SBATCH -o outfile6w  # send stdout to outfile
+#SBATCH -e errfile6w  # send stderr to errfile
+#SBATCH -t 24:00:00  # time requested in hour:minute:second
+
+module load python/3.9.0
+pyscenic grn "/home/users/avymohd/all_hori_epi.loom" "/home/users/avymohd/allTFs_hg38.txt" -o adj6w.csv --num_workers 18
+
+module load python/3.9.0
+pyscenic ctx \
+  "/home/users/avymohd/adj1.csv" \
+  "/home/users/avymohd/hg38__refseq-r80__10kb_up_and_down_tss.mc9nr.genes_vs_motifs.rankings.feather" \
+  --annotations_fname "/home/users/avymohd/motifs-v9-nr.hgnc-m0.001-o0.0.tbl" \
+  --expression_mtx_fname "/home/users/avymohd/all_hori_epi.loom" \
+  --output hori_reg.csv \
+  --mask_dropouts \
+  --num_workers 20
+
+module load python/3.9.0
+pyscenic aucell \
+   "/home/users/avymohd/all_hori_epi.loom" \
+   "/home/users/avymohd/hori_reg.csv"\
+   --output hori_scenic.csv \
+   --num_workers 1
+
+
+
