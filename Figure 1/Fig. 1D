@@ -1,0 +1,93 @@
+library(Seurat)
+library(tidyverse)
+library(cowplot)
+
+srt<- readRDS("allsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
+meta <-  read_csv("horizontal_metadata.csv")
+
+
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  select_at(vars(!contains("cellType"))) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType)) %>% 
+  mutate(tissue = case_when(
+    samptype == "TEC" ~ "T",
+    samptype == "EEC" ~ "E",
+    samptype == "BEC" ~ "B",
+    samptype == "LEC" ~ "L"
+  )) %>% 
+  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+  column_to_rownames("barcode")
+
+srt <- SetIdent(srt, value = "group_label")
+
+
+
+srt <- RenameIdents(srt, `Epithelial Basal B` = "Basal B")
+srt <- RenameIdents(srt, `Epithelial Basal E` = "Basal E")
+srt <- RenameIdents(srt, `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L")
+srt <- RenameIdents(srt, `Bud Tip Progenitor L` = "BTP L")
+srt <- RenameIdents(srt, `Gastric Epithelial E` = "Gastric E")
+srt <- RenameIdents(srt, `Submucosal Gland B` = "Submuc. Gland B")
+
+
+idents = c("mcTEC T",'cTEC T',"mTECI T","mTECII T","mTECIII/IV T","TECneuro T","TECmyo T","Basal B","Club B","Goblet B","Submuc. Gland B","Secretory B","Multiciliated L","BTP Adjacent L","BTP L","Basal E","Suprabasal E","Gastric E")
+
+sub<-subset(srt, idents = idents)
+sub@active.ident<- factor(sub@active.ident,levels=rev(idents))
+feature = c("FOXN1","PSMB11","DLK2","CCL19","AIRE","KRT1","POU2F3","NEUROD1","MYOD1",'IL33','SCGB1A1','MUC5B','LTF','SCGB3A2','PIFO','AGER','SFTPC','KRT15','KRT13','TFF1')
+
+### Top panel of figure
+DotPlot(sub, features = feature)+ scale_color_viridis_c(option = "rocket", direction = -1) + theme_minimal() +
+  theme(axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_text(angle = 90, size = 12, hjust=1,vjust=0.5),axis.text.y = element_text(size = 12))
+
+
+### Bottom panel of figure
+
+### Aggregating clusters across organs
+srt <- RenameIdents(srt, `T Cell B` = "T Cell BLE")
+srt <- RenameIdents(srt, `T Cell L` = "T Cell BLE")
+srt <- RenameIdents(srt, `T Cell E` = "T Cell BLE")
+srt <- RenameIdents(srt, `B Cell B` = "B Cell BL")
+srt <- RenameIdents(srt, `B Cell L` = "B Cell BL")
+#srt <- RenameIdents(srt, `Monocyte-Int E` = "Macrophage TBLE")
+srt <- RenameIdents(srt, `Macrophage T` = "Macrophage TBLE")
+srt <- RenameIdents(srt, `Macrophage L` = "Macrophage TBLE")
+srt <- RenameIdents(srt, `Macrophage B` = "Macrophage TBLE")
+#srt <- RenameIdents(srt, `Fibroblast-1 E` = "Fibroblast 1 TE")
+#srt <- RenameIdents(srt, `Fibroblast-1 T` = "Fibroblast 1 T")
+#srt <- RenameIdents(srt, `Fibroblast-2 E` = "Fibroblast 2 TE")
+#srt <- RenameIdents(srt, `Fibroblast-2 T` = "Fibroblast 2 T")
+#srt <- RenameIdents(srt, `Fibroblast B` = "Fibroblast BL")
+#srt <- RenameIdents(srt, `Fibroblast L` = "Fibroblast BL")
+srt <- RenameIdents(srt, `VSMC T` = "VSMC TBLE")
+srt <- RenameIdents(srt, `VSMC B` = "VSMC TBLE")
+srt <- RenameIdents(srt, `VSMC L` = "VSMC TBLE")
+srt <- RenameIdents(srt, `VSMC E` = "VSMC TBLE")
+srt <- RenameIdents(srt, `Smooth Muscle B` = "Smooth Muscle BLE")
+srt <- RenameIdents(srt, `Smooth Muscle L` = "Smooth Muscle BLE")
+srt <- RenameIdents(srt, `Smooth Muscle E` = "Smooth Muscle BLE")
+srt <- RenameIdents(srt, `Vascular Endothelial T` = "Vasc. Endothelial TBLE")
+srt <- RenameIdents(srt, `Vascular Endothelial B` = "Vasc. Endothelial TBLE")
+srt <- RenameIdents(srt, `Vascular Endothelial L` = "Vasc. Endothelial TBLE")
+srt <- RenameIdents(srt, `Vascular Endothelial E` = "Vasc. Endothelial TBLE")
+srt <- RenameIdents(srt, `Lymphatic Endothelial T` = "Lymph. Endothelial TL")
+srt <- RenameIdents(srt, `Lymphatic Endothelial L` = "Lymph. Endothelial TL")
+srt <- RenameIdents(srt, `Neuronal T` = "Neuronal TBLE")
+srt <- RenameIdents(srt, `Neuronal B` = "Neuronal TBLE")
+srt <- RenameIdents(srt, `Neuronal L` = "Neuronal TBLE")
+srt <- RenameIdents(srt, `Neuronal E` = "Neuronal TBLE")
+srt <- RenameIdents(srt, `Neuroendocrine B` = "Neuroendocrine BL")
+srt <- RenameIdents(srt, `Neuroendocrine L` = "Neuroendocrine BL")
+
+idents=c("DN Thymocyte T","SP/DP Thymocyte T","T Cell BLE","B Cell BL","Macrophage TBLE","Dendritic T","Fibroblast 1 T",'Fibroblast 1 Cycling T',"Fibroblast 2 T","VSMC TBLE","Smooth Muscle BLE","Cartilage B","Vasc. Endothelial TBLE","Lymph. Endothelial TL","Neuronal TBLE","Neuroendocrine BL")
+
+sub2<-subset(srt, idents = idents)
+sub2@active.ident<- factor(sub2@active.ident,levels=rev(idents))
+genes=c("TRDC","PTPRC","CD4","CD8A","CD3D","MS4A1",'S100A9','LAMP3',"FGFR1",'ALDH1A2','MKI67','FBN1','PDGFRB','ACTA2','DES','CNMD',"AQP1",'PECAM1','PROX1','NRXN1','CHGA')
+
+
+DotPlot(sub2, features = genes)+ scale_color_viridis_c(option = "rocket", direction = -1) + theme_minimal() +
+  theme(axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_text(angle = 90, size = 12, hjust=1,vjust=0.5),axis.text.y = element_text(size = 12))
+
