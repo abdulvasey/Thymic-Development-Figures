@@ -39,10 +39,10 @@ loci1 <- which(rowSums(exprMat) > 1*.01*ncol(exprMat))
 exprMat_filter <- exprMat[loci1, ]
 
 
-loom <- build_loom("/Users/avymohd/Documents/Single Cell Analysis/SCENIC/Practice/all_hori_epi.loom", dgem=exprMat_filter)
+loom <- build_loom("all_hori_epi.loom", dgem=exprMat_filter)
 
 
-##### Python 3
+##### Python3
 
 #!/bin/sh
 #SBATCH --job-name=Horizontal
@@ -54,24 +54,24 @@ loom <- build_loom("/Users/avymohd/Documents/Single Cell Analysis/SCENIC/Practic
 #SBATCH -t 24:00:00  # time requested in hour:minute:second
 
 module load python/3.9.0
-pyscenic grn "/home/users/avymohd/all_hori_epi.loom" "/home/users/avymohd/allTFs_hg38.txt" -o adj6w.csv --num_workers 18
+pyscenic grn "/path/all_hori_epi.loom" "/path/allTFs_hg38.txt" -o adj6w.csv --num_workers 18
 
 module load python/3.9.0
 pyscenic ctx \
-  "/home/users/avymohd/adj1.csv" \
-  "/home/users/avymohd/hg38__refseq-r80__10kb_up_and_down_tss.mc9nr.genes_vs_motifs.rankings.feather" \
-  --annotations_fname "/home/users/avymohd/motifs-v9-nr.hgnc-m0.001-o0.0.tbl" \
-  --expression_mtx_fname "/home/users/avymohd/all_hori_epi.loom" \
-  --output hori_reg.csv \
-  --mask_dropouts \
-  --num_workers 20
+"/path/adj1.csv" \
+"/path/hg38__refseq-r80__10kb_up_and_down_tss.mc9nr.genes_vs_motifs.rankings.feather" \
+--annotations_fname "/path/motifs-v9-nr.hgnc-m0.001-o0.0.tbl" \
+--expression_mtx_fname "/path/all_hori_epi.loom" \
+--output hori_reg.csv \
+--mask_dropouts \
+--num_workers 20
 
 module load python/3.9.0
 pyscenic aucell \
-   "/home/users/avymohd/all_hori_epi.loom" \
-   "/home/users/avymohd/hori_reg.csv"\
-   --output hori_scenic.csv \
-   --num_workers 1
+"/path/all_hori_epi.loom" \
+"/path/hori_reg.csv"\
+--output hori_scenic.csv \
+--num_workers 1
 
 
 
