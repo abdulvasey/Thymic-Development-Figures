@@ -1,209 +1,97 @@
-require(tidyverse)
-require(ggrepel)
-require(ggrastr)
-require(Seurat)
-require(checkmate)
-require(cowplot)
+library(tidyverse)
+library(Seurat)
+library (viridis)
+library(ggrastr)
+library(RColorBrewer)
+library(igraph)
+library(ggplot2)
+library(ggrepel)
+
+####AUCell matrix of SCENIC run with all horizontal epithelial cells
+reg_motif <- read_csv("hori_scenic.csv")
+
+srt_motif <- reg_motif %>% 
+  column_to_rownames("Cell") %>% 
+  rename_all(~str_remove(., "\\(\\+\\)")) %>% 
+  as.matrix() %>% 
+  Matrix::Matrix(sparse = T) %>% 
+  Matrix::t()
 
 
-# Creates a where each included object is named by the object name
-listN <- function(...){
-  anonList <- list(...)
-  names(anonList) <- as.character(substitute(list(...)))[-1]
-  anonList
-}
+srt_motif <- CreateSeuratObject(counts = srt_motif)
 
-# Simplified function to save pdf figures
-plt_pdf <- function(plt, w=7,h=5, dir="."){
-  if(!file.exists(file.path(dir))){dir.create(file.path(dir))}
-  obj_name <- deparse(substitute(plt))
-  path <- str_glue("{dir}/{obj_name}.pdf")
-  
-  pdf(path, width = w, height = h)
-  print(plt)
-  null <- dev.off()
-}
+srt_motif <- NormalizeData(srt_motif,normalization.method = "CLR")
+srt_motif <- FindVariableFeatures(srt_motif)
+srt_motif <- ScaleData(srt_motif)
+srt_motif <- RunPCA(srt_motif, features = VariableFeatures(srt_motif))
 
-# Relabels tec/bec/lec/eec to actual tissue name, case insensitive, vectorized
-tissue_relabel <- function(pattern){
-  case_when(
-    grepl("^TEC$", toupper(pattern)) ~ "Thymus",
-    grepl("^EEC$", toupper(pattern)) ~ "Esophagus",
-    grepl("^BEC$", toupper(pattern)) ~ "Bronchus",
-    grepl("^LEC$", toupper(pattern)) ~ "Lung"
-  )
-}
-# tissue_relabel(c("tec", "bec"))
+meta <- read_csv("horizontal_meta.csv")
+
+srt_motif@meta.data <- srt_motif@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  select_at(vars(!contains("cellType"))) %>% 
+  left_join(meta %>% select(barcode,cellType, cellGroup,tissue)) %>% 
+  mutate(tissue = case_when(
+    tissue == "tec" ~ "Thymus",
+    tissue == "eec" ~ "Esophagus",
+    tissue == "bec" ~ "Bronchus",
+    tissue == "lec" ~ "Lung"
+  )) %>% 
+  mutate(group_label = str_glue("{tissue}_{cellType}")) %>% 
+  column_to_rownames("barcode")
 
 
-# Function that generates paths for srt object based on:
-## tissue: all cells or individual tissue types
-## cells: all cells or only epithelial cells
-get_srt_path <- function(cells, tissue){
-  path_base <- "/labs/khatrilab/solomonb/thymus/Reintegrate_KW"
-  path_suffix <- ifelse(cells == "all", 
-                        "-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds",
-                        "_red.epi.from.individual.overall.int.rds")
-  path_tissue <- case_when(
-    cells == "all" & tissue == "tec" ~ "tecsamps-horiz",
-    cells == "all" ~ sprintf("%ssamps", tissue),
-    cells == "epi" ~ tissue
-  )
-  full_path <- sprintf("%s/%s%s", path_base, path_tissue, path_suffix)
-  return(full_path)
-}
-# get_srt_path("all", "eec")
+####renaming and shortening cluster names
+Idents(srt_motif)<-'cellType'
+srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor` = "BTP")
+srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor Adjacent` = "BTP Adjacent")
+ord<-c('mcTEC','cTEC', 'mTECI','mTECII', 'mTECIII/IV', 'TECneuro', 'TECmyo','Epithelial Basal',"Club","Goblet", 'Submucosal Gland','BTP', 'BTP Adjacent', 'Secretory',"Neuroendocrine","Suprabasal","Gastric Epithelial","Multiciliated")
+srt_motif@active.ident<-factor(srt_motif@active.ident,levels=ord)
 
-# ### Extracts cell barcode, reduction X+Y coordinates, and seurat cluster from seurat object
-# # Specify which reduction to take coordinates from
-extract_reduction_data <- function(srt, reduction = "tsne"){
-  assertChoice(reduction, c("tsne", "umap", "pca")) # Input check
-  coords <- as.data.frame(srt@reductions[[reduction]]@cell.embeddings) %>% rownames_to_column("barcode")
-  clusters <- srt@meta.data %>% dplyr::select(seurat_clusters) %>% rownames_to_column("barcode")
-  coords %>%
-    left_join(clusters, by = "barcode")
-}
-# extract_reduction_data(srt, reduction = "tsne")
+new.cluster.ids <- c('mcTEC','cTEC', 'mTECI','mTECII', 'mTECIII/IV', 'TECneuro', 'TECmyo','Epi. Basal',"Club","Goblet", 'Submuc.','BTP', 'BTP Adj.', 'Sec.',"NE","Suprabasal","Gastric","MC")
+names(new.cluster.ids) <- levels(srt_motif)
+srt_motif <- RenameIdents(srt_motif, new.cluster.ids)
 
-# ### Extracts cell barcode and specified gene expression data from seurat object
-# # Specify which assay and slot
-extract_gene_data <- function(srt, genes, assay = "RNA", slot = "data"){
-  assertChoice(assay, c("RNA", "SCT", "integrated")) # Input check
-  assertChoice(slot, c("data", "scale.data", "counts")) # Input check
-  
-  srt_slot <- slot(srt@assays[[assay]], slot)
-  if (!any(genes %in% rownames(srt_slot))){
-    stop("No selected genes found in assay/slot")} # Input check
-  
-  not_genes <- genes[!(genes %in% rownames(srt_slot))]
-  if (length(not_genes) > 0) {
-    message(sprintf("The following genes were not found in assay/slot: %s", 
-                    paste(not_genes, collapse = " ")))} # Input check
-  
-  genes <- genes[genes %in% rownames(srt_slot)]
-  mtx_gene <- srt_slot[genes,]
-  df_gene <- data.frame(Matrix::t(mtx_gene)) %>% 
-    rownames_to_column("barcode")
-  return(df_gene)
-}
 
-custom_DimPlot <- function(df, key, smpl_frac = 1, sep = ". ", plot_tissue = "all", plot_cells = "all",
-                           color_by = "cellType", use_rocket = F, point_size = 0.1, raster = F, DPI = 300, remove_doublet = T){
-  
-  ### Input checks
-  arg_col <- makeAssertCollection()
-  assertChoice(plot_tissue, c("all", "tec", "bec", "lec", "eec"), add = arg_col)
-  assertChoice(plot_cells, c("all", "epi"), add = arg_col)
-  assertChoice(color_by, c("cellType", "cellGroup", "tissue", "age"), add = arg_col)
-  assertDouble(smpl_frac, lower = 0.01, upper = 1)
-  assertLogical(raster, add = arg_col)
-  assertLogical(remove_doublet, add = arg_col)
-  if (arg_col$isEmpty()==F) {map(arg_col$getMessages(),print); reportAssertions(arg_col)}
-  
-  ### Define vars
-  plot_level <- sprintf("%s_%s",
-                        ifelse(plot_tissue == "all", "allTissues", "tissueSpecific"),
-                        ifelse(plot_cells == "all", "allCells", "epiCells"))
-  x_var <- sprintf("tSNE_1_%s", plot_level)
-  y_var <- sprintf("tSNE_2_%s", plot_level)
-  # order_var <- ifelse(color_by == "cellType",
-  #                     sprintf("%s_order_%s", color_by, plot_level),
-  #                     "cellGroup_order")
-  
-  ### Adjust input data
-  # Downsample if specified
-  if(smpl_frac != 1){df <- df %>% sample_frac(smpl_frac)}
-  # Distinguish between tissueSpecific and allTissues 
-  if (plot_tissue != "all"){df <- df %>% filter(tissue == plot_tissue) %>% dplyr::select(!contains("allTissues"))}
-  if (plot_tissue == "all"){df <- df %>% dplyr::select(!contains("tissueSpecific"))}
-  # Distinguish between cellType and cellGroup
-  if (color_by == "cellType"){df <- df %>% dplyr::select(!contains("cellGroup"))}
-  if (color_by == "cellGroup"){df <- df %>% dplyr::select(!contains("cellType"))}
-  # Remove doublets
-  if (remove_doublet == T){
-    df <- df %>% 
-      filter_at(vars(contains(c("cellType", "cellGroup"))), 
-                ~ !grepl("oublet", .) & !is.na(.) & . != "")}
-  # Order color var
-  if(color_by == "tissue"){
-    df <- df %>% mutate(tissue = factor(tissue, levels = c("tec","bec","lec","eec")))
-  } else if (color_by == "age"){
-    df <- df %>% mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo")))
-  } else {
-    order_var <- ifelse(color_by == "cellType",
-                        sprintf("%s_order_%s", color_by, plot_level),
-                        "cellGroup_order")
-    df <- df %>% 
-      unite("legend_label", !!sym(order_var), !!sym(color_by), sep = sep, remove = F) %>% # Create labels based on order and color var
-      mutate_if(is.character, ~fct_reorder(., !!sym(order_var))) # Factor all characters by order var
-  }
-  # Additional data formating 
-  df <- df %>% 
-    mutate_at(vars(contains(c("tSNE", "order"))), as.numeric) %>% # Ensures columns that should be numeric
-    filter_at(vars(contains(c(x_var, y_var))), ~!is.na(.)) %>% # Drop cells without coordinates (e.g. non epi cells when plotting epi integration)
-    mutate_if(is.factor, fct_drop) # Drop unusued factors (e.g. non epi cells when plotting epi integration)
-  
-  ### Create base layer
-  plt <- df %>% 
-    ggplot(aes(x = !!sym(x_var), y = !!sym(y_var), color = !!sym(color_by))) +
-    theme_void() +
-    labs(color = NULL) +
-    guides(colour = guide_legend(override.aes = list(size = 5), ncol = 1)) + # Increases size of points in legend
-    theme(legend.spacing.y = unit(0.2, "cm"),legend.key.height = unit(0.1, "in")) # Reduces spacing of labels in legend
-  
-  ### Add point layer w/ or w/o rasterization
-  if (raster==T){
-    plt <- plt + rasterize(geom_point(size = point_size), dpi = DPI) 
-  } else {
-    plt <- plt + geom_point(size = point_size)
-  }
-  
-  ### Add colors and labels
-  if(color_by == "tissue"){plt <- plt + 
-    #scale_color_brewer(palette = "Dark2",
-    #labels = c("tec" = "Thymus", "bec" = "Bronchus",
-    #"lec" = "Lung", "eec" = "Esophagus"))}
-    scale_color_manual(values = c("#D95F02","#7570B3","#1B9E77","#E7298A"),labels = c("tec" = "Thymus", "bec" = "Bronchus",
-                                                                                      "lec" = "Lung", "eec" = "Esophagus"))}
-  else if (color_by == "age"){plt <- plt +
-    scale_color_brewer(palette = "Dark2")
-  } else {
-    # Generate color/label key
-    legend_key <- df %>%
-      dplyr::select(contains(color_by), legend_label) %>%
-      distinct() %>% 
-      arrange(!!sym(order_var))
-    # Recolors and rename legend
-    label_key <- as.character(deframe(legend_key %>% dplyr::select(!!sym(color_by), "cellGroup")))
-    if (use_rocket == T){
-      # Using rocket color key for epithelial plots
-      color_key <- as.character(deframe(
-        legend_key %>% 
-          mutate(color_rocket = viridis::rocket(length(label_key), end = 0.95, direction = -1)) %>% 
-          dplyr::select(!!sym(color_by), color_rocket)))
-    } else {
-      color_key <- as.character(deframe(legend_key %>% dplyr::select(!!sym(color_by), contains("color"))))
-    }
-    plt <- plt + scale_color_manual(values = color_key, labels = label_key)  
-    # Generate median point key
-    df_median <- df %>% 
-      group_by_at(vars(c(color_by, contains("order")))) %>% 
-      summarise_at(vars(contains("tSNE")), ~ median(., na.rm = T))
-    # Add halo label layer using median points
-    plt <- plt + geom_text_repel(
-      data = df_median,
-      aes(
-        label = !!sym(order_var),
-        bg.color = "white", bg.r = 0.25, min.segment.length = 0
-      ), color = "black")
-  }
-  return(plt)
-}
-##################
-df<-read_csv('horizontal_metadata.csv')
+###UMAPs
 
-plt_all_organ <- custom_DimPlot(df, plot_tissue = "all", plot_cells = "epi", 
-                                color_by = "tissue", raster = T, point_size = 0.3, DPI = 300) +
-  #ggtitle("All cells by tissue")+
-  theme(plot.margin = unit(c(1,1,1,1), "lines"),text = element_text(size = 20))
-plt_all_organ
+####by cell type
+srt_motif <- RunUMAP(srt_motif, dims = 1:15,min.dist = 0.4,seed.use = 50)
+cols<-c("#FF6B81", "#FFD700", "#6FCF97", "#55E6C1", "#F57B51", "#9B90BC", "#FF935F", "#AFEEEE", "#50B2C0", "#FF7F50", "#6AAF6D", "#BB6BD9", "#78E08F", "#FD7272", "#FFD700", "#5DA2D5", "#FFAC81", "#D2B4DE"
+)
+
+
+
+Idents(srt_motif)<-'cellType'
+
+p<-DimPlot(srt_motif,pt.size = 0.3,shuffle = TRUE,cols = cols)+NoLegend()+NoAxes()
+m<-DimPlot(srt_motif,reduction='umap',combine=FALSE)
+z<-m[[1]][["data"]]
+df_median <- z %>% 
+  group_by_at(vars(c(ident))) %>% 
+  summarise_at(vars(contains("UMAP")), ~ median(., na.rm = T))
+
+plt<-p[[1]] 
+plt<-plt + NoAxes()+ NoLegend()+
+  geom_text_repel(data=df_median,size=7,min.segment.length = 0,force=10,force_pull = 0,aes(UMAP_1,UMAP_2,label=ident,bg.color = "white", bg.r = 0.2,size=20),color="black", show.legend = F)+ theme(legend.text = element_text(size=20))
+plt
+
+
+
+##########by organ
+
+Idents(srt_motif)<-'tissue'
+ident<- c('Thymus',"Bronchus","Lung","Esophagus")
+srt_motif@active.ident<-factor(srt_motif@active.ident,levels=ident)
+
+p<-DimPlot(srt_motif,pt.size = 0.3,shuffle = TRUE,cols = c( "#D95F02", "#7570B3", "#1B9E77","#E7298A"))+NoLegend()+NoAxes()
+m<-DimPlot(srt_motif,reduction='umap',combine=FALSE)
+z<-m[[1]][["data"]]
+df_median <- z %>% 
+  group_by_at(vars(c(ident))) %>% 
+  summarise_at(vars(contains("UMAP")), ~ median(., na.rm = T))
+
+plt<-p[[1]] 
+plt<-plt + NoAxes()+ NoLegend()+
+  geom_text_repel(data=df_median,size=7,min.segment.length = 0,force=10,force_pull = 0,aes(UMAP_1,UMAP_2,label=ident,bg.color = "white", bg.r = 0.2,size=20),color="black", show.legend = F)+ theme(legend.text = element_text(size=20))
+plt
