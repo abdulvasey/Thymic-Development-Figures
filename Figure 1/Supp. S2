@@ -1,7 +1,11 @@
 library(tidyverse)
 library(ggrastr)
+library(Seurat)
+library(dplyr)
+
+#######all fetal cells
 srt <- readRDS("allsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
-meta <- read_csv("horizontal_metadata.csv")
+meta <- read_csv("horizontal_meta.csv")
 
 
 srt@meta.data <- srt@meta.data %>% 
@@ -20,82 +24,56 @@ srt@meta.data <- srt@meta.data %>%
 srt <- SetIdent(srt, value = srt@meta.data$cellGroup)
 DefaultAssay(srt) <- "RNA"
 
+srt<-subset(srt,idents = "Doublets",invert=TRUE)
 
-#### Differential List Generation
 library(future)
 plan("multisession", workers = 6)
+allmarks<-FindAllMarkers(srt,min.diff.pct = 0.25)
 
 
-epithelial<- FindMarkers(srt,min.pct = 0.7, ident.1 = "Epithelial", ident.2 = c("Mesenchymal","Endothelial","Immune","Neuronal","Myoepithelial"))
-mesenchymal<- FindMarkers(srt,min.pct = 0.7, ident.1 = "Mesenchymal", ident.2 = c("Epithelial","Endothelial","Immune","Neuronal","Myoepithelial"))
-endothelial<- FindMarkers(srt,min.pct = 0.7, ident.1 = "Endothelial", ident.2 = c("Epithelial","Mesenchymal","Immune","Neuronal","Myoepithelial"))
-Immune<- FindMarkers(srt,min.pct = 0.7, ident.1 = "Immune", ident.2 = c("Epithelial","Mesenchymal","Endothelial","Neuronal","Myoepithelial"))
-Neuronal<- FindMarkers(srt,min.pct = 0.7, ident.1 = "Neuronal", ident.2 = c("Epithelial","Mesenchymal","Endothelial","Immune","Myoepithelial"))
-Myoepithelial<- FindMarkers(srt,min.pct = 0.7, ident.1 = "Myoepithelial", ident.2 = c("Epithelial","Mesenchymal","Endothelial","Immune","Neuronal"))
-
-epithelial$names <- rownames(epithelial)
-mesenchymal$names <- rownames(mesenchymal)
-endothelial$names <- rownames(endothelial)
-Immune$names <- rownames(Immune)
-Neuronal$names <- rownames(Neuronal)
-Myoepithelial$names <- rownames(Myoepithelial)
-
-ep <- subset(epithelial, pct.1 > 0.7,select=p_val:names)
-ep <- ep[order(-ep1$avg_log2FC),]
-mes <- subset(mesenchymal, pct.1 > 0.7,select=p_val:names)
-mes <- mes[order(-mes1$avg_log2FC),]
-end<- subset(endothelial, pct.1 > 0.7,select=p_val:names)
-end <- end[order(-end$avg_log2FC),]
-imm<- subset(Immune, pct.1 > 0.7,select=p_val:names)
-imm <- imm[order(-imm$avg_log2FC),]
-neu<- subset(Neuronal, pct.1 > 0.7,select=p_val:names)
-neu <- neu[order(-neu$avg_log2FC),]
-myo<- subset(Myoepithelial, pct.1 > 0.7,select=p_val:names)
-myo <- myo[order(-myo$avg_log2FC),]
-
-
-
-
-srt_avg <- AverageExpression(srt, assays = "RNA", group.by = "cellGroup", return.seurat = T)
-# Remove NA cluster created from cells that didn't fall in an annotation group
-srt_avg <- srt_avg[,!grepl("NA", colnames(srt_avg))] 
-# Reprocess data
-srt_avg <- NormalizeData(srt_avg)
-srt_avg <- FindVariableFeatures(srt_avg, selection.method = "vst", nfeatures = 2000)
-all.genes <- rownames(srt_avg)
-srt_avg <- ScaleData(srt_avg, features = all.genes)
-srt_avg <- RunPCA(srt_avg, features = VariableFeatures(object = srt_avg), npcs = 20)
 
 cluster_order <- c("Epithelial", "Endothelial","Mesenchymal","Immune","Neuronal","Myoepithelial")
-#### dataframe containing list of 20 differential genes from each cell group derived from analysis above
-all_genes_df <- read_csv("cell_groupDGE.csv")
+
+srt@active.ident<- factor(srt@active.ident,levels=cluster_order)
+
+####list of transcription factors (Aerts Lab)
+file_path="allTFs_hg38.txt"
+elements_vector <- scan(file_path, what = character(), sep = "\n")
 
 
+#####dotplot loop setup
+genes_list <- list()
+df_list<- list()
+plt_list<- list()
 
+DefaultAssay(srt) <- "RNA"
+for (x in cluster_order) {
+  df <- subset(allmarks,cluster==x & p_val_adj<10^-100 & avg_log2FC>0) %>%
+    arrange(p_val_adj,-avg_log2FC)
+  all_genes<-df$gene[1:50]
+  all_genes<-na.omit(all_genes)
+  genes_list[[paste("set_", x)]] <- all_genes
+  df_list[[paste("df_", x)]] <- df
+  ########setting up vector to bolden TF names
+  result_vector <- character(length(all_genes))
+  for (i in seq_along(all_genes)) {
+    if (all_genes[i] %in% elements_vector) {
+      result_vector[i] <- 'bold.italic'
+    } else {
+      result_vector[i] <- 'italic'
+    }
+  }
+  ###### ggplot construction
+  plt<-DotPlot(srt, features = rev(all_genes),assay = "RNA",cols = c('white','darkred')) + theme_minimal() + theme(axis.title.x=element_blank(),axis.title.y=element_blank())+
+    theme(axis.text.x = element_text(angle = 90, size = 10, hjust=1,vjust=0.5,color = 'black'),axis.text.y = element_text(size = 10, face = "italic",color = 'black'))+ggtitle(x)+coord_flip()+
+    theme(axis.text.y = element_text(face = rev(result_vector)))
+  ####plot formatting
+  plt[["guides"]][["colour"]][["title"]]<-'Avg. Exp.'
+  plt[["guides"]][["size"]][["title"]]<-'% Exp.'
+  plt[["guides"]][["size"]][["order"]]<-2
+  plt[["guides"]][["colour"]][["order"]]<-1
+  plt_list[[paste("plt_", x)]] <- plt
+}
 
-all_genes <- all_genes_df %>% pull(gene)
-all_genes_data <- t(as.matrix(srt_avg[all_genes,]@assays$RNA@scale.data)) %>% 
-  as.data.frame() %>% 
-  rownames_to_column("group") %>% 
-  pivot_longer(-group, names_to = "gene", values_to = "value") %>%
-  left_join(all_genes_df, by = "gene") %>% 
-  mutate(gene = factor(gene, levels = rev(all_genes))) %>% 
-  mutate(group = factor(group, levels = rev(cluster_order))) %>% 
-  mutate(cluster = factor(cluster, levels = cluster_order)) 
-
-
-
-
-plt_htmp <- bind_rows(
-  all_genes_data %>% mutate(feature = "All genes"),
-  #tf_genes_data %>% mutate(feature = "Transcription factors")
-) %>% 
-  ggplot(aes(x = group, y = gene, fill = value))+
-  geom_tile()+
-  ggh4x::facet_grid2(cluster~feature,scales = "free", independent = "y")+
-  theme_minimal()+
-  scale_fill_viridis_c(option = "mako") +
-  labs(x = NULL, y = NULL, fill = "Scaled\nexpression")+
-  theme(axis.text.x = element_blank(),
-        axis.text.y = element_text(size = 10),panel.grid.major = element_blank())
-plt_htmp
+patchwork::wrap_plots(plt_list, 
+                      nrow = 2)
