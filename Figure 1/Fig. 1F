@@ -1,0 +1,74 @@
+library(tidyverse)
+library(Seurat)
+library(SingleCellExperiment)
+library(slingshot)
+library(tradeSeq)
+library(cowplot)
+library(ggrastr)
+library(DelayedMatrixStats)
+library (RColorBrewer)
+library(viridis)
+library(SCORPIUS)
+library(zoo)
+library(pheatmap)
+library(tradeSeq)
+library(reshape2)
+
+
+#########Seurat containing all fetal epithelial cells
+srt <- readRDS("all_red.epi.from.individual.overall.int.rds")
+meta <-  read_csv("horizontal_meta.csv")
+
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  select_at(vars(!contains("cellType"))) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType)) %>% 
+  mutate(tissue = case_when(
+    samptype == "TEC" ~ "T",
+    samptype == "EEC" ~ "E",
+    samptype == "BEC" ~ "B",
+    samptype == "LEC" ~ "L"
+  )) %>% 
+  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+  column_to_rownames("barcode")
+
+
+###Finding differential genes across epithelial subset of organs
+Idents(srt)<-'tissue'
+marks<-FindAllMarkers(srt)
+
+
+
+#########ordering clusters
+Idents(srt)<-'group_label'
+tec<-c('mcTEC T','cTEC T', 'mTECI T',"mTECII T", 'mTECIII/IV T', 'TECneuro T', 'TECmyo T')
+lec<-c('BTP L', 'BTP Adj. L', 'MC L', 'Sec. L', 'Epi. Basal L', 'NE L')
+bec<-c('Epi. Basal B','Club B', 'Goblet B', 'Submuc. B', 'Sec. B','MC B','BTP B')
+eec<-c('Epi. Basal E', 'Suprabasal E', 'MC E', 'Gastric E')
+ord<-c(tec,bec,lec,eec)
+new.cluster.ids <- ord
+names(new.cluster.ids) <- levels(srt)
+srt <- RenameIdents(srt, new.cluster.ids)
+srt@active.ident<-factor(srt@active.ident,levels = ord)
+
+##color of each cluster
+cols<-c("#FF4500", "#FF6F00", "#FF8C00", "#FFA500", "#FFB366", "#FFCC99", "#FFDAB9","#9400D3", "#800080", "#663399", "#4B0082", "#4169E1", "#0000CD", "#000080", "#003300","#006400", "#008000", "#00A86B", "lightgreen","#C1FFC1","#C71585", "#FF69B4", "#FFB6C1", "#E6ADDA" )
+
+
+
+######downsampling 30 cells per cluster
+a<-c()
+m<-unique(srt@meta.data$group_label)
+for (x in m) {
+  print(x)
+  df<-srt@meta.data
+  df<-subset(df,df$group_label==x)
+  t<-sample(rownames(df),size = 30)
+  a<-c(a,t)
+}
+
+thym<-subset(marks,marks$cluster=="T")
+genes<-thym$gene[1:60]
+
+DoHeatmap(srt,features = genes,cells = a,label=F,draw.lines = FALSE,raster=TRUE,group.colors = rev(cols),angle=90,size = 3,disp.min = -1)+NoLegend()+scale_fill_viridis(option = 'magma')+theme(axis.text.y = element_text(size = 9, color = "black",face='italic'))
