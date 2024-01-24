@@ -1,1 +1,62 @@
-Hi
+library(tidyverse)
+library(Seurat)
+library(tSpace)
+library(umap)
+
+###Seurat of thymic epithelial cells from all stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode:age) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+  column_to_rownames("barcode")
+
+
+###tspace umap parameters
+tspace <- tSpace(
+  df = data.frame(srt@reductions$pca@cell.embeddings), 
+  K = 20, 
+  L = 15, 
+  D = 'pearson_correlation', 
+  graph = 5, 
+  trajectories = 200, 
+  wp = 15, 
+  dr = 'pca',
+  core_no = 24,
+  seed = 1234)
+
+print("Running UMAP")
+umap.conf <- umap.defaults
+umap.conf$n_neighbors <- 7
+umap.conf$metric <- 'pearson'
+umap.conf$min_dist <- 0.3
+umap.conf$n_components <- 2
+
+df <- tspace$ts_file %>% dplyr::select(-Index)
+ump <- umap(df)
+ts_df <- c(tspace, "umap" = ump)
+
+
+
+###adding tspace UMAP coordinates to Seurat
+tembeds<- ts_df[c("1","2")]
+tembeds <- tembeds %>% 
+  rename('1'="tspace_1",
+         '2'="tspace_2")
+tembeds<- as.matrix(tembeds)
+rownames (tembeds)<- colnames(srt)
+srt[["tspace"]] <- CreateDimReducObject(embeddings = tembeds, key = "tspace_", assay = DefaultAssay(srt))
+srt@active.ident<-factor(srt@active.ident,levels = c("cTEC", "Cycling TEC","mcTEC","mTEC 1",'mTEC 2','mTEC 3/4','TEC myo/neuro','Parathyroid'))
+
+##renaming clusters
+ord<-c("Cycling TEC","mcTEC",'cTEC',"mTEC 1",'mTEC 2','mTEC 3/4','TEC myo/neuro','Parathyroid')
+Idents(srt)<-'cellType'
+srt@active.ident<-factor(srt@active.ident,levels=ord)
+new.cluster.ids <- c("Cycling TEC","mcTEC",'cTEC',"mTECI",'mTECII','mTECIII/IV','TEC myo/neuro','Parathyroid')
+names(new.cluster.ids) <- levels(srt)
+srt <- RenameIdents(srt, new.cluster.ids)
+
+DimPlot(srt, reduction = "tspace",cols = c('#FB836F' , '#C1549C','#DEA200' , '#7E549F' ,  '#99B898','navyblue','#E84A5F','grey25'),shuffle=TRUE,pt.size = 0.5)+NoLegend()+NoAxes()
