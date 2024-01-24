@@ -1,0 +1,116 @@
+library(tidyverse)
+library(Seurat)
+library(biomaRt)
+library (dplyr)
+library(tidyverse)
+library(Seurat)
+library(biomaRt)
+library (dplyr)
+library(tidyverse)
+library(Seurat)
+library(tSpace)
+library(umap)
+library(SCopeLoomR)
+library(tidyverse)
+library(Seurat)
+library(biomaRt)
+library (dplyr)
+library(ggplot2)
+library(patchwork)
+
+#####Thymic epithelial cells from all developmental stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode:age) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+  column_to_rownames("barcode")
+
+##subsetting main thymic clusters
+srt <- SetIdent(srt, value = srt@meta.data$cellType)
+srt<-subset(srt,idents = c("mcTEC","mTEC 1","cTEC","mTEC 2"))
+
+##gene set procurement
+read_gmt <- function(path){
+  tibble(line = read_lines(path)) %>% 
+    separate(line, into = c("pathway", "url", "genes"), sep = "\t", extra = "merge") %>% 
+    dplyr::select(-url) %>% 
+    mutate(genes = str_split(genes, "\t")) %>% 
+    unnest(genes)
+}
+
+version <- "7.5"
+gmt_path <- str_glue("https://data.broadinstitute.org/gsea-msigdb/msigdb/release/{version}/c2.cp.v{version}.symbols.gmt")
+pathway_key <- read_gmt(gmt_path)
+
+
+pathway1 = "REACTOME_INTERFERON_GAMMA_SIGNALING"
+genes <- pathway_key %>% filter(pathway == pathway1) %>% pull(genes)
+
+srt<- AddModuleScore(srt, assay = "RNA", list(genes), name = "gamma")
+
+VlnPlot(srt, features = "gamma1")* stat_summary(fun = mean, geom = "point")+NoLegend()
+
+pathway1 = "REACTOME_INTERFERON_ALPHA_BETA_SIGNALING"
+genes <- pathway_key %>% filter(pathway == pathway1) %>% pull(genes)
+
+srt <- AddModuleScore(srt, assay = "RNA", list(genes), name = "ab")
+
+
+
+####extracting data
+j<-VlnPlot(srt,features = "ab1",combine=FALSE)
+q<-j[[1]]$data
+df_grp = q %>% group_by(ident)  %>%
+  summarise(Average_Module_Score = mean(ab1),
+            sd = sd(ab1),
+            .groups = 'drop')
+
+###ordering data frame
+df2 <- df_grp %>%
+  separate(ident, into = c("type", "time"), sep = "_") %>%
+  mutate(
+    type = case_when(
+      type == "mTEC 1" ~ "mTECI",
+      type == "mTEC 2" ~ "mTECII",
+      TRUE ~ type
+    )
+  )
+df<-df2
+df$time<-factor(df$time,levels=c("6w","7w","16w","17w","18w","3mo"))
+df$type<-factor(df$type,levels=c('mcTEC','cTEC','mTECI','mTECII'))
+
+##ggplot construction
+plt<-ggplot(df, aes(x = time, y = Average_Module_Score, group = type,colour = type)) + ggtitle("IFN AB Signaling")+
+  geom_line(size=2.5) + theme_minimal() + theme(axis.text = element_text(size = 12,color = 'black')) +scale_color_manual(values=c('#FFA07A','darkred','#E6AB02',"#D95F02")) + scale_x_discrete(labels=c("PCW 6", "PCW 7", "PCW 16","PCW 17", "PCW 18","PNM 3"))+theme(axis.title.x=element_blank())+
+  NoLegend()
+plt
+
+
+##repeating process for ifn gamma module
+j<-VlnPlot(srt,features = "gamma1",combine=FALSE)
+q<-j[[1]]$data
+df_grp = q %>% group_by(ident)  %>%
+  summarise(Average_Module_Score = mean(gamma1),
+            sd = sd(gamma1),
+            .groups = 'drop')
+
+df2 <- df_grp %>%
+  separate(ident, into = c("type", "time"), sep = "_") %>%
+  mutate(
+    type = case_when(
+      type == "mTEC 1" ~ "mTECI",
+      type == "mTEC 2" ~ "mTECII",
+      TRUE ~ type
+    )
+  )
+df<-df2
+df$time<-factor(df$time,levels=c("6w","7w","16w","17w","18w","3mo"))
+df$type<-factor(df$type,levels=c('mcTEC','cTEC','mTECI','mTECII'))
+plt<-ggplot(df, aes(x = time, y = Average_Module_Score, group = type,colour = type)) + ggtitle("IFN Gamma Signaling")+
+  geom_line(size=2.5) + theme_minimal() + theme(axis.text = element_text(size = 12,color = 'black')) +scale_color_manual(values=c('#FFA07A','darkred','#E6AB02',"#D95F02")) + scale_x_discrete(labels=c("PCW 6", "PCW 7", "PCW 16","PCW 17", "PCW 18","PNM 3"))+theme(axis.title.x=element_blank())+
+  NoLegend()
+plt
