@@ -1,0 +1,75 @@
+library(tidyverse)
+library(Seurat)
+library(biomaRt)
+library (dplyr)
+library(tidyverse)
+library(Seurat)
+library(tSpace)
+library(umap)
+library(tidyverse)
+library(clusterProfiler)
+library(enrichplot)
+library(Seurat)
+library(cowplot)
+library(ggnewscale)
+library(ggrastr)
+library(viridis)
+
+#####Thymic epithelial cells from all developmental stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode:age) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+  column_to_rownames("barcode")
+
+##subsetting/renaming PCW 6 clusters
+srt <- SetIdent(srt, value = srt@meta.data$age)
+srt_sub<-subset(srt, idents = "6w")
+srt_sub<-subset(srt_sub, idents = c('mcTEC',"cTEC","mTEC 1",'mTEC 2',"Parathyroid"))
+lev<-c('mcTEC',"cTEC","mTEC 1",'mTEC 2',"Parathyroid")
+srt_sub@active.ident<-factor(srt_sub@active.ident,levels=lev)
+newnames<-c('mcTEC 6w',"cTEC 6w", "mTECI 6w",'mTECII 6w', "Parathyroid 6w")
+names(newnames) <- levels(srt_sub)
+srt_sub <- RenameIdents(srt_sub, newnames)
+
+##gene set procurement
+read_gmt <- function(path){
+  tibble(line = read_lines(path)) %>% 
+    separate(line, into = c("pathway", "url", "genes"), sep = "\t", extra = "merge") %>% 
+    dplyr::select(-url) %>% 
+    mutate(genes = str_split(genes, "\t")) %>% 
+    unnest(genes)
+}
+
+version <- "7.5"
+gmt_path <- str_glue("https://data.broadinstitute.org/gsea-msigdb/msigdb/release/{version}/c2.cp.v{version}.symbols.gmt")
+pathway_key <- read_gmt(gmt_path)
+
+
+
+pathway1 = "REACTOME_INTERFERON_GAMMA_SIGNALING"
+genes <- pathway_key %>% filter(pathway == pathway1) %>% pull(genes)
+
+srt_sub <- AddModuleScore(srt_sub, assay = "RNA", list(genes), name = "gamma")
+
+pathway1 = "REACTOME_INTERFERON_ALPHA_BETA_SIGNALING"
+genes <- pathway_key %>% filter(pathway == pathway1) %>% pull(genes)
+
+srt_sub <- AddModuleScore(srt_sub, assay = "RNA", list(genes), name = "ab")
+
+color_key = c('#FFA07A','darkred','#E6AB02',"#D95F02","#6D6E71")
+
+VlnPlot(srt_sub, features = "gamma1", pt.size = 0, cols = color_key)* stat_summary(fun = mean, geom = "point") + NoLegend() + ggtitle("Gamma") + xlab("") + theme(axis.text.x= element_text(size = 12)) + theme(axis.text.y= element_text(size = 12))+ theme(plot.title = element_text(size=12))
+plt<-VlnPlot(srt_sub, features = "gamma1", pt.size = 0, , cols = color_key,combine = FALSE)
+plt<-plt[[1]]* stat_summary(fun = mean, geom = "point") + NoLegend() + ggtitle("Gamma") + xlab("") + theme(axis.text.x= element_text(size = 12)) + theme(axis.text.y= element_text(size = 12))+ theme(plot.title = element_text(size=12))
+plt
+
+
+plt<-VlnPlot(srt_sub, features = "ab1", pt.size = 0, , cols = color_key,combine = FALSE)
+plt<-plt[[1]]* stat_summary(fun = mean, geom = "point") + NoLegend() + ggtitle("AB") + xlab("") + theme(axis.text.x= element_text(size = 12)) + theme(axis.text.y= element_text(size = 12))+ theme(plot.title = element_text(size=12))
+plt$plot_env$data<-NULL
+plt
