@@ -67,7 +67,7 @@ dp
 ####barplot
 ####all adjacencies from GRNboost2 ouput of SCENIC
 adj<-read.csv("hori_adj.csv")
-####adjacencies from Fig 2C. Part 1 containing adjacencies found in enriched motifs
+####inferred interactions from Fig 2C. Part 1 containing adjacencies found in enriched motifs
 edges <- read.csv("edge_all_check.csv", header =FALSE)
 
 
