@@ -1,137 +1,138 @@
 library(tidyverse)
 library(Seurat)
-library(pheatmap)
-library(cowplot)
-library (dendsort)
-library(ggdendro)
-sort_hclust <- function(...) as.hclust(dendsort::dendsort(as.dendrogram(...)))
+library (viridis)
+library(ggrastr)
+library(RColorBrewer)
+library(igraph)
+library(ggplot2)
+library(ggrepel)
+library(reshape2)
 
-srt <- readRDS("all_red.epi.from.individual.overall.int.rds")
-barcode_key <- read_csv("horizontal_metadata.csv")
+####AUCell matrix of SCENIC run with all horizontal epithelial cells
+reg_motif <- read_csv("hori_scenic.csv")
+
+srt_motif <- reg_motif %>% 
+  column_to_rownames("Cell") %>% 
+  rename_all(~str_remove(., "\\(\\+\\)")) %>% 
+  as.matrix() %>% 
+  Matrix::Matrix(sparse = T) %>% 
+  Matrix::t()
 
 
-srt@meta.data <- srt@meta.data %>% 
-  # select(-tissue, -annotation_2, -annotation_1, cell_name) %>%
+srt_motif <- CreateSeuratObject(counts = srt_motif)
+
+srt_motif <- NormalizeData(srt_motif,normalization.method = "CLR")
+srt_motif <- FindVariableFeatures(srt_motif)
+srt_motif <- ScaleData(srt_motif)
+srt_motif <- RunPCA(srt_motif, features = VariableFeatures(srt_motif))
+
+meta <- read_csv("horizontal_meta.csv")
+
+srt_motif@meta.data <- srt_motif@meta.data %>% 
   rownames_to_column("barcode") %>% 
-  left_join(barcode_key %>% select(barcode, tissue, annotation_2=cellType,annotation_1=cellGroup), by = "barcode") %>%
+  select_at(vars(!contains("cellType"))) %>% 
+  left_join(meta %>% select(barcode,cellType, cellGroup,tissue)) %>% 
   mutate(tissue = case_when(
     tissue == "tec" ~ "Thymus",
+    tissue == "eec" ~ "Esophagus",
     tissue == "bec" ~ "Bronchus",
-    tissue == "lec" ~ "Lung",
-    tissue == "eec" ~ "Esophagus"
+    tissue == "lec" ~ "Lung"
   )) %>% 
-  unite("cell_name", annotation_2, tissue, sep = "-",remove = F) %>% 
+  mutate(group_label = str_glue("{tissue}_{cellType}")) %>% 
   column_to_rownames("barcode")
 
-# Average expression across annotated clusters
-srt_avg <- AverageExpression(srt, assays = "RNA", group.by = "cell_name", return.seurat = T)
-# Remove NA cluster created from cells that didn't fall in an annotation group
-srt_avg <- srt_avg[,!grepl("NA", colnames(srt_avg))] 
-# Reprocess data
-srt_avg <- NormalizeData(srt_avg)
-srt_avg <- FindVariableFeatures(srt_avg, selection.method = "vst", nfeatures = 2000)
-all.genes <- rownames(srt_avg)
-srt_avg <- ScaleData(srt_avg, features = all.genes)
-srt_avg <- RunPCA(srt_avg, features = VariableFeatures(object = srt_avg), npcs = 20)
 
-Idents(srt_avg) <- colnames(srt_avg)
-include_clusters <- c(
-  "cTEC-Thymus",
-  "mcTEC-Thymus",
-  "mTECI-Thymus",
-  "Epithelial_Basal-Esophagus",
-  "Suprabasal-Esophagus",
-  "Multiciliated-Esophagus",
-  "Epithelial_Basal-Bronchus",
-  "Club-Bronchus",
-  "Bud Tip Progenitor-Lung",
-  "Bud Tip Progenitor Adjacent-Lung",
-  "Secretory-Bronchus",
-  "Goblet-Bronchus",
-  "Submucosal Gland-Bronchus",
-  "Multiciliated-Bronchus"
-)
-srt_avg_sub <- subset(srt_avg, idents = include_clusters)
+####renaming and shortening cluster names
+Idents(srt_motif)<-'cellType'
+srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor` = "BTP")
+srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor Adjacent` = "BTP Adjacent")
+ord<-c('mcTEC','cTEC', 'mTECI','mTECII', 'mTECIII/IV', 'TECneuro', 'TECmyo','Epithelial Basal',"Club","Goblet", 'Submucosal Gland','BTP', 'BTP Adjacent', 'Secretory',"Neuroendocrine","Suprabasal","Gastric Epithelial","Multiciliated")
+srt_motif@active.ident<-factor(srt_motif@active.ident,levels=ord)
+
+new.cluster.ids <- c('mcTEC','cTEC', 'mTECI','mTECII', 'mTECIII/IV', 'TECneuro', 'TECmyo','Epi. Basal',"Club","Goblet", 'Submuc.','BTP', 'BTP Adj.', 'Sec.',"NE","Suprabasal","Gastric","MC")
+names(new.cluster.ids) <- levels(srt_motif)
+srt_motif <- RenameIdents(srt_motif, new.cluster.ids)
+
+######Finding differential regulons
+Idents(srt_motif)<-'tissue'
+allmarks <- FindAllMarkers(srt_motif,logfc.threshold = 0.01)
+thymus <- subset(allmarks, cluster == "Thymus")
+esophagus <- subset(allmarks, cluster == "Esophagus")
+lung<- subset(allmarks, cluster == "Lung")
+bronchus<- subset(allmarks, cluster == "Bronchus")
+
+a <- thymus%>%
+  filter(p_val==0,avg_log2FC>0)%>%
+  arrange(desc(avg_log2FC))
+length(a$gene)
 
 
-embeddings <- srt_avg_sub@reductions$pca@cell.embeddings
-hc_corr <- hclust(as.dist(1-cor(t(as.matrix(embeddings)))))
-annotation_df <- tibble(group = sort_hclust(hc_corr)$labels[sort_hclust(hc_corr)$order]) %>% 
-  separate(group, into = c(NA, "Tissue"), sep = "-", remove = F) %>% 
-  left_join(
-    tibble(Tissue = c("Bronchus", "Esophagus", "Thymus", "Lung"),
-           color = RColorBrewer::brewer.pal(4, "Set1")),
-    by = "Tissue"
-  ) %>% 
-  column_to_rownames("group")
-cor_mat <- cor(t(as.matrix(embeddings)))
-plt_ec<-pheatmap::pheatmap(cor_mat,
-                   cluster_cols = sort_hclust(hc_corr),
-                   cluster_rows = sort_hclust(hc_corr),
-                   color = viridis::viridis(40),
-                   annotation_col = annotation_df %>% select(Tissue),
-                   annotation_row = annotation_df %>% select(Tissue),
-                   annotation_colors = list(Tissue = annotation_df %>% select(Tissue, color) %>% distinct() %>% deframe()))
+b <- bronchus%>%
+  filter(p_val==0,avg_log2FC>0)%>%
+  arrange(desc(avg_log2FC))
+length(b$gene)
 
-plt_ec$tree_row$labels[plt_ec$tree_row$order]
+c <- lung%>%
+  filter(p_val==0,avg_log2FC>0)%>%
+  arrange(desc(avg_log2FC))
+length(c$gene)
 
-plot(plt_ec$tree_row, labels = F, hang = -1)
-plt_tree <- ggdendro::ggdendrogram(plt_ec$tree_col) + theme_void()
-group=c('Multiciliated B', 'Multiciliated E', 'BTP Adjacent L', 'Secretory B', 'BTP L', 'Club B', 'Epithelial Basal B', 'Goblet B', 'Submucosal Gland B', 'Epithelial Basal E','Suprabasal E', 'cTEC T', 'mcTEC T', 'mTECI T')
-plt_htmp <- as.data.frame(cor_mat) %>% 
-  rownames_to_column("rows") %>% 
-  pivot_longer(-rows, names_to = "cols", values_to = "cor") %>% 
-  mutate_if(is.character, ~factor(.,levels = plt_ec$tree_row$labels[plt_ec$tree_row$order])) %>% 
-  ggplot(aes(x = rows, y = cols, fill = cor)) + 
-  geom_tile(color = "white") + 
+d <- esophagus%>%
+  filter(avg_log2FC>0)%>%
+  arrange((p_val))
+length(d$gene)
+
+
+e <- c(a$gene[1:45],b$gene[1:20],c$gene[1:20],d$gene[1:20])
+e <- unique (e)
+
+
+
+##########renaming and ordering clusters
+Idents(srt_motif)<-'group_label'
+
+srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor L` = "BTP L")
+srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L")
+srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor B` = "BTP B")
+tec<-c('mcTEC T','cTEC T', 'mTECI T',"mTECII T", 'mTECIII/IV T', 'TECneuro T', 'TECmyo T')
+lec<-c('BTP L', 'BTP Adjacent L', 'Multiciliated L', 'Secretory L', 'Epithelial Basal L', 'Neuroendocrine L')
+bec<-c('Epithelial Basal B','Club B', 'Goblet B', 'Submucosal Gland B', 'Secretory B','Multiciliated B','BTP B')
+eec<-c('Epithelial Basal E', 'Suprabasal E', 'Multiciliated E', 'Gastric Epithelial E')
+ord<-c(tec,bec,lec,eec)
+
+srt_motif@active.ident<-factor(srt_motif@active.ident,levels = ord)
+
+tec<-c('mcTEC T','cTEC T', 'mTECI T',"mTECII T", 'mTECIII/IV T', 'TECneuro T', 'TECmyo T')
+lec<-c('BTP L', 'BTP Adj. L', 'MC L', 'Sec. L', 'Epi. Basal L', 'NE L')
+bec<-c('Epi. Basal B','Club B', 'Goblet B', 'Submuc. B', 'Sec. B','MC B','BTP B')
+eec<-c('Epi. Basal E', 'Suprabasal E', 'MC E', 'Gastric E')
+ord<-c(tec,bec,lec,eec)
+new.cluster.ids <- ord
+names(new.cluster.ids) <- levels(srt_motif)
+srt_motif <- RenameIdents(srt_motif, new.cluster.ids)
+srt_motif@active.ident<-factor(srt_motif@active.ident,levels = ord)
+
+######heatmap construction
+mat1 <- AverageExpression(srt_motif, slot = 'counts',features = rev(e),assays = 'RNA')
+
+mat1 <- t(scale(t(mat1$RNA)))
+
+# Set minimum and maximum values
+min_value <- -2
+max_value <- 2.5
+
+# Limit values in the matrix to the specified min and max
+mat1 <- pmax(pmin(mat1, max_value), min_value)
+
+df<-melt(mat1)
+df<-as.data.frame(df)
+colnames(df) <- c ("x", "y", "value")
+plt<-ggplot(df, aes(x = x, y = y, fill = value)) +
+  geom_tile() +
   theme_minimal() +
-  scale_fill_viridis_c(option = "mako") +
-  #scale_fill_viridis(option = "E") +
-  #scale_colour_brewer(palette = "Greens") +
-  #scale_fill_gradient(low = "black",high = "white") +
-  #scale_fill_gradient2(low = "grey99", mid = "pink", high = "orchid") +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1,color='black'),axis.text.y = element_text(color='black'),text = element_text(size = 18,color='black')) +
-  scale_x_discrete(labels=group)+scale_y_discrete(labels=group)+
-  labs(x="", y = "", fill = "Correlation")
-plt_htmp
+  scale_fill_viridis(option = "magma") +
+  labs(x = NULL, y = NULL, fill = "Scaled\nexpression")+
+  theme(axis.text.x = element_text(angle = 90, size = 12,color = "black",hjust = 1),
+        axis.text.y = element_text(size = 12, color = "black",face='italic'),panel.grid = element_blank()) + ggtitle('') + coord_flip()
 
-plt_key <- as.data.frame(cor_mat) %>% 
-  rownames_to_column("rows") %>% 
-  select(rows) %>% 
-  mutate(rows = factor(rows, levels = plt_ec$tree_row$labels[plt_ec$tree_row$order])) %>% 
-  separate(rows, into = c(NA, "Tissue"), sep = "-", remove = F) %>% 
-  ggplot(aes(x = rows, y = 1, fill = Tissue)) + 
-  geom_tile(color = "black")+
-  theme_void() + 
-  scale_fill_manual(values = c("#7570B3","#E7298A","#1B9E77","#D95F02")) +
-  #scale_fill_manual(values = c("#1C8F64","#CE4A09","#6259A4","#DE0077")) +
-  labs(x="",y="") +
-  theme (text = element_text(size = 15))
-plt_key
 
-lgd_htmp <- get_legend(plt_htmp+ theme(legend.justification = c(0,1)))
-lgd_key <- get_legend(plt_key+ theme(legend.justification = c(0,1)))
-plt_htmp_grid <- cowplot::plot_grid(
-  plt_tree,
-  plt_key + theme(legend.position = "none"),
-  plt_htmp + theme(legend.position = "none"),
-  ncol = 1,
-  rel_heights = c(0.1,0.02,0.9),
-  axis = "lr",
-  align = "v"
-)
-plt_lgd <- cowplot::plot_grid(
-  NULL,
-  lgd_key,
-  lgd_htmp,
-  NULL,
-  ncol = 1,
-  rel_heights = c(0.1,0.3,0.3,0.4)
-)
-plt_full_htmp <- cowplot::plot_grid(
-  plt_htmp_grid,
-  plt_lgd,
-  nrow = 1,
-  rel_widths = c(0.8,0.2)
-)
-plt_full_htmp
