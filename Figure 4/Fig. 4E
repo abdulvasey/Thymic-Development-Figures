@@ -1,0 +1,38 @@
+library(Seurat)
+library(tidyverse)
+library(patchwork)
+
+
+###Seurat of thymic epithelial cells from all stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+##dotplot
+ord<- c("Cycling TEC","mcTEC","cTEC","mTEC 1","mTEC 2","mTEC 3/4","TEC myo/neuro","Parathyroid")
+ord<- rev(ord)
+srt2@active.ident <- factor(srt2@active.ident, levels = ord)
+plt3<-DotPlot(srt2, features = c("HDAC1","HDAC2","HDAC3","HDAC4","HDAC5","HDAC6","HDAC7","HDAC8"),cols = c('white','darkred')) + theme_minimal() +
+  theme(axis.text.x = element_text(angle=90, color='black', size = 12,hjust=1,vjust=0.5,face='italic'),axis.text.y = element_text(color='black', size = 12))+
+  theme(axis.title.x = element_blank(),axis.title.y = element_blank())+scale_y_discrete(label=rev(c("Cycling TEC","mcTEC","cTEC","mTECI","mTECII","mTECIII/IV","TEC myo/neuro","Parathyroid")))
+plt3
+
+
+###vlnplot
+w67<-c('Cycling TEC 6,7 pcw','mcTEC 6,7 pcw', 'cTEC 6,7 pcw','mTECI 6,7 pcw')
+w1617<-c('Cycling TEC 16,17,18 pcw','mcTEC 16,17,18 pcw', 'cTEC 16,17,18 pcw', 'mTECI 16,17,18 pcw')
+m3<-c('Cycling TEC 3 months', 'mcTEC 3 months', 'cTEC 3 months','mTECI 3 months')
+new.cluster.ids<- c(w67,w1617,m3)
+names(new.cluster.ids) <- levels(srt_sub)
+srt_sub <- RenameIdents(srt_sub, new.cluster.ids)
+cyc<-c('Cycling TEC 6,7 pcw','Cycling TEC 16,17,18 pcw','Cycling TEC 3 months')
+mct<-c('mcTEC 6,7 pcw','mcTEC 16,17,18 pcw','mcTEC 3 months')
+mtec<-c('mTECI 6,7 pcw','mTECI 16,17,18 pcw','mTECI 3 months')
+ctec<-c('cTEC 6,7 pcw','cTEC 16,17,18 pcw','cTEC 3 months')
+cols<-c('#FB836F','#FB836F','#FB836F', '#C1549C','#C1549C','#C1549C','#DEA200','#DEA200','#DEA200', '#7E549F','#7E549F','#7E549F')
+#col3<-c(cols,cols,cols)
+ord<-c(cyc,mct,ctec,mtec)
+srt_sub@active.ident<-factor(srt_sub@active.ident,levels= ord)
+
+plt4<-VlnPlot(srt_sub, features = "HDAC4",cols = cols,pt.size = 0)* stat_summary(fun.y = mean, geom = "point")+theme_minimal()+NoLegend()+ theme(title = element_blank(),axis.text.x= element_text(angle = 90,size = 16,hjust = 1,color = 'black',vjust = 0.5),axis.title.y=element_blank(),axis.title.x=element_blank(),axis.text.y=element_text(size = 10))+
+  scale_x_discrete(labels=c('Embryonic','Fetal','Postnatal','Embryonic','Fetal','Postnatal','Embryonic','Fetal','Postnatal','Embryonic','Fetal','Postnatal' ))
+plt4
