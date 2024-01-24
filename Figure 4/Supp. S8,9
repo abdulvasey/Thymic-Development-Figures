@@ -1,0 +1,98 @@
+library(Seurat)
+library(tidyverse)
+library(patchwork)
+
+
+###Seurat of thymic epithelial cells from all stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+srt <- SetIdent(srt, value = srt@meta.data$cellType)
+
+#rename clusters
+ord<-c("Cycling TEC","mcTEC",'cTEC',"mTEC 1",'mTEC 2','mTEC 3/4','TEC myo/neuro',"Parathyroid")
+Idents(srt)<-'cellType'
+srt@active.ident<-factor(srt@active.ident,levels=ord)
+new.cluster.ids <- c("Cycling TEC","mcTEC",'cTEC',"mTECI",'mTECII','mTECIII/IV','TEC myo/neuro',"Parathyroid")
+names(new.cluster.ids) <- levels(srt)
+srt <- RenameIdents(srt, new.cluster.ids)
+
+
+##differential genes
+allmarks<-FindAllMarkers(srt)
+
+####list of transcription factors (Aerts Lab)
+file_path="allTFs_hg38.txt"
+elements_vector <- scan(file_path, what = character(), sep = "\n")
+
+
+genes_list <- list()
+df_list<- list()
+plt_list<- list()
+
+DefaultAssay(srt) <- "RNA"
+for (x in new.cluster.ids) {
+  df <- subset(allmarks,cluster==x & p_val_adj<10^-100 & avg_log2FC>0) %>%
+    arrange(p_val_adj,-avg_log2FC)
+  all_genes<-df$gene[1:50]
+  all_genes<-na.omit(all_genes)
+  genes_list[[paste("set_", x)]] <- all_genes
+  df_list[[paste("df_", x)]] <- df
+  ########setting up vector to bolden TF names
+  result_vector <- character(length(all_genes))
+  for (i in seq_along(all_genes)) {
+    if (all_genes[i] %in% elements_vector) {
+      result_vector[i] <- 'bold.italic'
+    } else {
+      result_vector[i] <- 'italic'
+    }
+  }
+  ###### ggplot construction
+  plt<-DotPlot(srt, features = rev(all_genes),assay = "RNA",cols = c('white','darkred')) + theme_minimal() + theme(axis.title.x=element_blank(),axis.title.y=element_blank())+
+    theme(axis.text.x = element_text(angle = 90, size = 10, hjust=1,vjust=0.5,color = 'black'),axis.text.y = element_text(size = 10, face = "italic",color = 'black'))+ggtitle(x)+coord_flip()+
+    theme(axis.text.y = element_text(face = rev(result_vector)))
+  ####plot formatting
+  plt[["guides"]][["colour"]][["title"]]<-'Avg. Exp.'
+  plt[["guides"]][["size"]][["title"]]<-'% Exp.'
+  plt[["guides"]][["size"]][["order"]]<-2
+  plt[["guides"]][["colour"]][["order"]]<-1
+  plt_list[[paste("plt_", x)]] <- plt
+}
+
+
+
+
+#################all TFs Dotplots
+N <- FetchData(srt, vars = elements_vector)
+df <- t(N)
+srt[['TF']] <- CreateAssayObject(data = df)
+
+
+alltfs<- FindAllMarkers(srt)
+
+DefaultAssay(srt) <- "TF"
+genes_list <- list()
+df_list<- list()
+plt_list<- list()
+for (x in new.cluster.ids) {
+  df <- subset(alltfs,cluster==x & p_val_adj<0.05 & avg_log2FC>0) %>%
+    arrange(p_val_adj,-avg_log2FC)
+  all_genes<-df$gene[1:50]
+  all_genes<-na.omit(all_genes)
+  genes_list[[paste("set_", x)]] <- all_genes
+  df_list[[paste("df_", x)]] <- df
+  
+  ###### ggplot construction
+  plt<-DotPlot(srt, features = rev(all_genes),assay = "RNA",cols = c('white','darkred')) + theme_minimal() + theme(axis.title.x=element_blank(),axis.title.y=element_blank())+
+    theme(axis.text.x = element_text(angle = 90, size = 10, hjust=1,vjust=0.5,color = 'black'),axis.text.y = element_text(size = 10, face = "italic",color = 'black'))+ggtitle(x)+coord_flip()
+  ####plot formatting
+  plt[["guides"]][["colour"]][["title"]]<-'Avg. Exp.'
+  plt[["guides"]][["size"]][["title"]]<-'% Exp.'
+  plt[["guides"]][["size"]][["order"]]<-2
+  plt[["guides"]][["colour"]][["order"]]<-1
+  plt_list[[paste("plt_", x)]] <- plt
+}
+
+
+patchwork::wrap_plots(plt_list, 
+                      nrow = 2)
