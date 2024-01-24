@@ -1,0 +1,24 @@
+library(tidyverse)
+library("DESeq2")
+library (ggplot2)
+library (ggrepel)
+
+#####bulkRNAseq count matrix
+df<-read_tsv("/Users/avymohd/Documents/Single Cell Analysis/single cell paper bulk/new_name.tsv")
+####meta data for samples
+Meta<-read_csv("/Users/avymohd/Documents/Single Cell Analysis/single cell paper bulk/meta.csv")
+
+dds <- DESeqDataSetFromMatrix(countData = df,
+                              colData = Meta,
+                              design= ~ Type)
+dds <- DESeq(dds)
+
+d <-plotCounts(dds, gene="IFNG", intgroup="Type", returnData=TRUE)
+d$Type<-factor(d$Type,levels=c("Thymus","Thymocyte","Bronchus","Lung"))
+plt<-ggplot(d, aes(x = Type, y = count, color = Type)) +
+  geom_point(position=position_jitter(w = 0.1,h = 0),size=6) +
+  theme_minimal() +
+  ggtitle("IFNG") +
+  theme(plot.title = element_text(hjust = 0.5),axis.text = element_text(size = 12,color = 'black'),legend.text = element_text(size = 12),text = element_text(size=12,color = 'black')) +scale_color_manual(values=c("#D95F02","black","#7570B3", "#1B9E77"))+
+  theme(axis.title.x=element_blank(),axis.title.y=element_blank()) 
+plt
