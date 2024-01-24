@@ -1,0 +1,49 @@
+library(Seurat)
+library(tidyverse)
+library(ggrepel)
+library(ggplot2)
+
+###Seurat of thymic epithelial cells from all stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+##renaming clusters
+ord<-c("Cycling TEC","mcTEC",'cTEC',"mTEC 1",'mTEC 2','mTEC 3/4','TEC myo/neuro',"Parathyroid")
+Idents(srt)<-'cellType'
+srt@active.ident<-factor(srt@active.ident,levels=ord)
+new.cluster.ids <- c("Cycling TEC","mcTEC",'cTEC',"mTECI",'mTECII','mTECIII/IV','TEC myo/neuro',"Parathyroid")
+names(new.cluster.ids) <- levels(srt)
+srt <- RenameIdents(srt, new.cluster.ids)
+
+srt@active.ident<-factor(srt@active.ident, levels=rev(new.cluster.ids))
+
+
+###Retinoic Acid gene modules
+ra_synthesis_select <- c("ADH4", "RDH10", "RDH11", "RDH14", "ALDH1A1", "ALDH1A2", "ALDH1A3",
+                         "SDR16C5", "DHRS3", "DHRS4", "DHRS9", "DLD", "PDHA1", "PDHB",
+                         "PDK1", "PDK2", "PDK3", "PDK4", "PLAT", "AKR1C3", "PDHX", "STRA6") %>% sort()
+ra_nuclear_select <- c("FABP5", "RARA", "RARB", "RXRA", "RXRB", "PPARD", "RORA", "CRABP1", 
+                       "CRABP2") %>% sort()
+ra_metabolism_select <- c("CYP26A1", "CYP26B1", "CYP26C1")
+
+
+srt <- AddModuleScore(srt, assay = "RNA", list(ra_synthesis_select), name = "RA_synthesis_module")
+srt <- AddModuleScore(srt, assay = "RNA", list(ra_nuclear_select), name = "RA_nuclear_module")
+srt <- AddModuleScore(srt, assay = "RNA", list(ra_metabolism_select), name = "RA_degredation_module")
+
+
+cols = c('#FB836F' , '#C1549C','#DEA200' , '#7E549F' ,  '#99B898','navyblue','#E84A5F','grey25')
+plt1<-VlnPlot(srt,features = c("RA_synthesis_module1"),cols = cols, pt.size = 0,combine = FALSE)
+plt1<-plt1[[1]] * stat_summary(fun.y = mean, geom = "point")+
+  ggtitle("RA Synthesis")+theme_minimal()+NoLegend()+ theme(axis.text.x= element_text(size = 12,color='black',angle=45,hjust = 1)) + theme(axis.text.y= element_text(size = 12,color='black'),axis.title.x = element_blank())+labs(y="Module Score")
+plt1 
+
+plt2<-VlnPlot(srt,features = c("RA_nuclear_module1"),cols = cols, pt.size = 0,combine = FALSE)
+plt2<-plt2[[1]] * stat_summary(fun.y = mean, geom = "point")+
+  ggtitle("RA Nuclear")+theme_minimal()+NoLegend()+ theme(axis.text.x= element_text(size = 12,color='black',angle=45,hjust = 1)) + theme(axis.text.y= element_text(size = 12,color='black'),axis.title.x = element_blank())+labs(y="Module Score")
+plt2
+
+plt3<-VlnPlot(srt,features = c("RA_degredation_module1"),cols = cols, pt.size = 0,y.max = 1,combine = FALSE)
+plt3<-plt3[[1]] * stat_summary(fun.y = mean, geom = "point")+
+  ggtitle("RA Degradation")+theme_minimal()+NoLegend()+ theme(axis.text.x= element_text(size = 12,color='black',angle=45,hjust = 1)) + theme(axis.text.y= element_text(size = 12,color='black'),axis.title.x = element_blank())+labs(y="Module Score")
+plt3
