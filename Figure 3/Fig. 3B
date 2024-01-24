@@ -1,0 +1,206 @@
+library(tidyverse)
+library(Seurat)
+library(SingleCellExperiment)
+library(slingshot)
+library(tradeSeq)
+library(cowplot)
+library(ggrastr)
+library(DelayedMatrixStats)
+library (RColorBrewer)
+library(viridis)
+library(SCORPIUS)
+library(zoo)
+library(pheatmap)
+library(tradeSeq)
+library(reshape2)
+library(ggrepel)
+
+
+#####Seurat of all fetal epithelial cells
+srt <- readRDS("all_red.epi.from.individual.overall.int.rds")
+
+meta <-  read_csv("horizontal_meta.csv")
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  select_at(vars(!contains("cellType"))) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType)) %>% 
+  mutate(tissue = case_when(
+    samptype == "TEC" ~ "T",
+    samptype == "EEC" ~ "E",
+    samptype == "BEC" ~ "B",
+    samptype == "LEC" ~ "L"
+  )) %>% 
+  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+  column_to_rownames("barcode")
+
+Idents(srt)<-'group_label'
+
+####renaming and ordering clusters
+srt <- RenameIdents(srt, `Bud Tip Progenitor L` = "BTP L")
+srt <- RenameIdents(srt, `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L")
+srt <- RenameIdents(srt, `Bud Tip Progenitor B` = "BTP B")
+tec<-c('mcTEC T','cTEC T', 'mTECI T',"mTECII T", 'mTECIII/IV T', 'TECneuro T', 'TECmyo T')
+lec<-c('BTP L', 'BTP Adjacent L', 'Multiciliated L', 'Secretory L', 'Epithelial Basal L', 'Neuroendocrine L')
+bec<-c('Epithelial Basal B','Club B', 'Goblet B', 'Submucosal Gland B', 'Secretory B','Multiciliated B','BTP B')
+eec<-c('Epithelial Basal E', 'Suprabasal E', 'Multiciliated E', 'Gastric Epithelial E')
+ord<-c(tec,bec,lec,eec)
+
+srt@active.ident<-factor(srt@active.ident,levels = ord)
+
+tec<-c('mcTEC T','cTEC T', 'mTECI T',"mTECII T", 'mTECIII/IV T', 'TECneuro T', 'TECmyo T')
+lec<-c('BTP L', 'BTP Adj. L', 'MC L', 'Sec. L', 'Epi. Basal L', 'NE L')
+bec<-c('Epi. Basal B','Club B', 'Goblet B', 'Submuc. B', 'Sec. B','MC B','BTP B')
+eec<-c('Epi. Basal E', 'Suprabasal E', 'MC E', 'Gastric E')
+ord<-c(tec,bec,lec,eec)
+new.cluster.ids <- ord
+names(new.cluster.ids) <- levels(srt)
+srt <- RenameIdents(srt, new.cluster.ids)
+srt@active.ident<-factor(srt@active.ident,levels = ord)
+
+table(srt@active.ident)
+
+#subsetting select epithelial cluster
+sub<-subset(srt,idents=c('mcTEC T','cTEC T','mTECI T','mTECII T','Epi. Basal B','BTP L','Epi. Basal E'))
+
+#####Differential markers
+marks<-FindAllMarkers(sub)
+
+
+
+
+####EMAP plot setup
+library(tidyverse)
+library(clusterProfiler)
+library(enrichplot)
+library(Seurat)
+library(cowplot)
+library(ggnewscale)
+library(ggrastr)
+library(viridis)
+library(dplyr)
+library(plyr)
+library(Seurat)
+
+read_gmt <- function(path){
+  tibble(line = read_lines(path)) %>% 
+    separate(line, into = c("pathway", "url", "genes"), sep = "\t", extra = "merge") %>% 
+    dplyr::select(-url) %>% 
+    mutate(genes = str_split(genes, "\t")) %>% 
+    unnest(genes)
+}
+
+version <- "7.5"
+gmt_path <- str_glue("https://data.broadinstitute.org/gsea-msigdb/msigdb/release/{version}/c2.cp.v{version}.symbols.gmt")
+pathway_key <- read_gmt(gmt_path)
+
+get_rank_list <- function(path, dge_type = "dge"){
+  if(dge_type == "cge"){
+    df <- read_csv(path) %>% 
+      # filter(cell_group == cluster_filter) %>% 
+      dplyr::select(!contains(c("pct","max","min"))) %>% 
+      pivot_longer(!cell_group:gene, names_to = c("tissue","metric"), values_to="value", names_pattern = "(.{3})_(.*)") %>% 
+      pivot_wider(names_from = "metric", values_from = "value") %>% 
+      group_by(cell_group, gene) %>% 
+      summarise(
+        avg_log2FC = mean(avg_log2FC, na.rm = T), 
+        padj_max = max(p_val_adj, na.rm = T),
+        padj_min = min(p_val_adj, na.rm = T),
+        padj_avg = mean(p_val_adj, na.rm = T),
+      ) %>% 
+      ungroup() %>% 
+      dplyr::select(cluster = cell_group, gene, avg_log2FC) %>% 
+      arrange(cluster, desc(avg_log2FC)) %>% 
+      group_by(cluster) %>% 
+      nest() %>% 
+      mutate(data = map(data, deframe)) %>% 
+      deframe()
+  }  
+  if (dge_type == "dge"){
+    df <- read_csv(path) %>%  
+      # filter(cluster == cluster_filter) %>% 
+      dplyr::select(cluster, gene, avg_log2FC) %>% 
+      arrange(cluster, desc(avg_log2FC)) %>% 
+      group_by(cluster) %>% 
+      nest() %>% 
+      mutate(data = map(data, deframe)) %>% 
+      deframe()
+  }
+  return(df)
+}
+
+###path/marks.csv is csv of marks df from above
+cluster_genes_list <- get_rank_list(path= 'path/marks.csv', dge_type = "dge")
+
+
+set.seed(100)
+comp_result <- compareCluster(
+  geneClusters = cluster_genes_list,
+  fun = "GSEA",
+  TERM2GENE = pathway_key,
+  pvalueCutoff = 0.01
+) %>%
+  pairwise_termsim()
+
+
+
+# Network only overrepresented pathways
+comp_result_positive <- comp_result
+comp_result_positive@compareClusterResult <- comp_result_positive@compareClusterResult %>% 
+  filter(enrichmentScore > 0,NES>2.5)
+
+
+
+# Selecting for only KEGG and REACTOME pathways
+comp_result_positive@compareClusterResult <- comp_result_positive@compareClusterResult[grep("KEGG|REACTOME", comp_result_positive@compareClusterResult$Description), ]
+
+
+
+n <- 4
+set.seed(210)
+pathway_network_full <- comp_result_positive %>% 
+  pairwise_termsim() %>% 
+  emapplot(.,legend_n=4,showCategory = 10, cex_category = 1.5, cex_line = 0.5, layout = "fr", pie = "Count") + scale_fill_manual(values=c("darkgreen",'darkred','#7570B3','maroon',"#FFA07A",'#E6AB02',"#D95F02"))
+set.seed(123)
+pathway_network_full
+
+
+
+highlight_pathway_patterns <- c(
+  "INTERFERON_ALPHA_BETA",
+  "ANTIGEN_PRESENTATION_FOLDING",
+  "ANTIGEN_PROCESSING",
+  "CHEMOKINE_RECEPTORS",
+  "INTERFERON_GAMMA",
+  "INTERLEUKIN_1_SIGNALING",
+  "CYTOKINE_SIGNALING_IN_IMMUNE_SYSTEM",
+  "COSTIMULATION_BY",
+  "TCR_SIGNALING",
+  "PROTEASOME",
+  "CROSS_PRESENTATION",
+  "NF_KB_ACTIVATION",
+  "KERATIN",
+  "TRANSLATION_ELONGATION",
+  "RIBOSOME",
+  "RRNA_PROCESSING",
+  "SURFACTANT","KEGG_RIBOSOME",
+  "REACTOME_EUKARYOTIC_TRANSLATION_INITIATION",
+  "INTERFERON",'NGF','ROBO_RECEPTORS'
+)
+highlight_pathways <- pathway_network_full$data %>% dplyr::select(name) %>% distinct() %>% filter(grepl(paste(highlight_pathway_patterns, collapse = "|"), name)) %>%  pull(name)
+
+relabel_emapplot <- function(emap_plt, labels, repel_params = list(size = 5, bg.color = "white",bg.r = 0.23, min.segment.length = 0, box.padding = 0.5)){
+  emap_plt$data$name <- ifelse(emap_plt$data$name %in% labels, emap_plt$data$name, NA)
+  gginnards::delete_layers(emap_plt, "GeomTextRepel") + 
+    do.call(ggrepel::geom_text_repel, c(list(mapping = aes(x=x,y=y,label=name)), repel_params)) 
+}
+set.seed(125)
+pathway_network_highlight <- relabel_emapplot(pathway_network_full, highlight_pathways)
+set.seed(125)
+pathway_network_highlight
+pathway_network_highlight <- relabel_emapplot(pathway_network_full, highlight_pathways)
+
+## Shorten names
+pathway_network_highlight$data$name<- mapvalues(pathway_network_highlight$data$name, from=c('REACTOME_EUKARYOTIC_TRANSLATION_ELONGATION','REACTOME_RRNA_PROCESSING','KEGG_RIBOSOME','REACTOME_EUKARYOTIC_TRANSLATION_INITIATION','REACTOME_KERATINIZATION','REACTOME_TCR_SIGNALING','REACTOME_INTERLEUKIN_1_SIGNALING','KEGG_PROTEASOME','KEGG_ANTIGEN_PROCESSING_AND_PRESENTATION','REACTOME_INTERFERON_GAMMA_SIGNALING','REACTOME_CYTOKINE_SIGNALING_IN_IMMUNE_SYSTEM','REACTOME_INTERFERON_ALPHA_BETA_SIGNALING','REACTOME_INTERFERON_SIGNALING','REACTOME_NGF_STIMULATED_TRANSCRIPTION','REACTOME_CROSS_PRESENTATION_OF_SOLUBLE_EXOGENOUS_ANTIGENS_ENDOSOMES','REACTOME_SIGNALING_BY_ROBO_RECEPTORS'), to=c('TRANSLATION ELONGATION', 'RRNA PROCESSING', 'RIBOSOME', 'TRANSLATION INITIATION', 'KERATINIZATION', 'TCR SIGNALING', 'IL1 SIGNALING', 'PROTEASOME','ANTIGEN PRESENTATION', 'IFN-G SIGNALING', 'CYTOKINE IMMUNE SIGNALING', 'IFN-AB SIGNALING', 'IFN SIGNALING','NGF STIMULATED TRANSCRIPTION','CROSS PRESENTATION','ROBO RECEPTOR SIGNALING'))
+pathway_network_highlight
+set.seed(130)
