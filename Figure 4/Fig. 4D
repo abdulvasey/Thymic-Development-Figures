@@ -1,0 +1,57 @@
+library(tidyverse)
+library(Seurat)
+library(biomaRt)
+library (dplyr)
+library(tidyverse)
+library(Seurat)
+library(biomaRt)
+library (dplyr)
+library(tidyverse)
+library(Seurat)
+library(tSpace)
+library(umap)
+library(SCopeLoomR)
+library(tidyverse)
+library(Seurat)
+library(biomaRt)
+library (dplyr)
+library(ggplot2)
+library(patchwork)
+
+###Seurat of thymic epithelial cells from all stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+
+srt <- SetIdent(srt, value = srt@meta.data$cellType)
+srt<-subset(srt,idents = c("mcTEC","mTEC 1","cTEC","mTEC 2",'Cycling TEC'))
+
+
+ra_metabolism_select <- c("CYP26A1", "CYP26B1", "CYP26C1")
+srt <- AddModuleScore(srt, assay = "RNA", list(ra_metabolism_select), name = "ab")
+
+j<-VlnPlot(srt,features = "ab1",combine=FALSE)
+q<-j[[1]]$data
+df_grp = q %>% group_by(ident)  %>%
+  summarise(Average_Module_Score = mean(ab1),
+            sd = sd(ab1),
+            .groups = 'drop')
+
+
+df2 <- df_grp %>%
+  separate(ident, into = c("type", "time"), sep = "_") %>%
+  mutate(
+    type = case_when(
+      type == "mTEC 1" ~ "mTECI",
+      type == "mTEC 2" ~ "mTECII",
+      TRUE ~ type
+    )
+  )
+
+df<-df2
+df$time<-factor(df$time,levels=c("6w","7w","16w","17w","18w","3mo"))
+df$type<-factor(df$type,levels=c('Cycling TEC','mcTEC','cTEC','mTECI','mTECII'))
+plt1<-ggplot(df, aes(x = time, y = Average_Module_Score, group = type,colour = type)) + ggtitle("RA Degradation")+
+  geom_line(size=1.5) + theme_minimal() + theme(axis.text = element_text(size = 12,color = 'black')) +scale_color_manual(values=c('#FB836F' , '#C1549C','#DEA200' , '#7E549F' ,  '#99B898')) + scale_x_discrete(labels=c("PCW 6", "PCW 7", "PCW 16","PCW 17", "PCW 18","PNM 3"))+theme(axis.title.x=element_blank()) 
+plt1[["plot_env"]][["srt"]]<-NULL
+plt1
