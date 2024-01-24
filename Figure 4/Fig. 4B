@@ -1,0 +1,56 @@
+library(Seurat)
+library(tidyverse)
+library(ggrepel)
+library(ggplot2)
+
+###Seurat of thymic epithelial cells from all stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+##renaming clusters
+ord<-c("Cycling TEC","mcTEC",'cTEC',"mTEC 1",'mTEC 2','mTEC 3/4','TEC myo/neuro',"Parathyroid")
+Idents(srt)<-'cellType'
+srt@active.ident<-factor(srt@active.ident,levels=ord)
+new.cluster.ids <- c("Cycling TEC","mcTEC",'cTEC',"mTECI",'mTECII','mTECIII/IV','TEC myo/neuro',"Parathyroid")
+names(new.cluster.ids) <- levels(srt)
+srt <- RenameIdents(srt, new.cluster.ids)
+
+srt@active.ident<-factor(srt@active.ident, levels=rev(new.cluster.ids))
+
+
+###Retinoic Acid gene modules
+ra_synthesis_select <- c("ADH4", "RDH10", "RDH11", "RDH14", "ALDH1A1", "ALDH1A2", "ALDH1A3",
+                         "SDR16C5", "DHRS3", "DHRS4", "DHRS9", "DLD", "PDHA1", "PDHB",
+                         "PDK1", "PDK2", "PDK3", "PDK4", "PLAT", "AKR1C3", "PDHX", "STRA6") %>% sort()
+ra_nuclear_select <- c("FABP5", "RARA", "RARB", "RXRA", "RXRB", "PPARD", "RORA", "CRABP1", 
+                       "CRABP2") %>% sort()
+
+ra_metabolism_select <- c("CYP26A1", "CYP26B1", "CYP26C1")
+
+
+df <- DotPlot(srt, features = c(ra_synthesis_select, ra_nuclear_select, ra_metabolism_select))$data %>% 
+  mutate(geneGroup = factor(case_when(
+    features.plot %in% ra_synthesis_select ~ "Synthesis",
+    features.plot %in% ra_nuclear_select ~ "Nuclear",
+    features.plot %in% ra_metabolism_select ~ "Degradation"
+  ), levels = rev(c("Degradation","Nuclear","Synthesis"))))
+
+
+list<-c('ALDH1A3', 'PDK3', 'RDH11', 'STRA6', 'DHRS3', 'SDR16C5', 'ADH4', 'ALDH1A2', 'DHRS4', 'RDH14', 'AKR1C3', 'PDK4', 'ALDH1A1', 'DHRS9', 'PDK1', 'PDHX', 'PDK2', 'PDHA1', 'DLD', 'PDHB', 'PLAT', 'RDH10', 'CRABP1', 'RARB', 'FABP5', 'RORA', 'RARA', 'RXRA', 'CRABP2', 'PPARD', 'RXRB', 'CYP26A1', 'CYP26B1', 'CYP26C1')
+
+plt_aEC_dotplot <- df %>% 
+  mutate(features.plot = factor(features.plot, levels = list)) %>% 
+  ggplot(aes(y = id, x = features.plot))+
+  geom_point(aes(fill = avg.exp.scaled, size = pct.exp), colour="black",pch=21,stroke=NA) +
+  theme_light()+
+  theme(axis.text.y = element_text(size=12,color='black'),
+        axis.text.x = element_text(size=12,color='black',angle = 90, hjust=1,vjust=0.5,face='italic'),
+        panel.spacing=unit(0,"lines"),text= element_text(size = 11))+
+  scale_fill_gradientn(colours = c('white','darkred'))+
+  scale_size_continuous(limits = c(0,100))+
+  # facet_wrap(~geneGroup, scales = "free_x", nrow = 2)+
+  ggh4x::facet_nested(. ~ geneGroup, scales = "free_x", space = "free_x")+
+  scale_y_discrete(limits=rev) +
+  labs(fill="Avg. Exp.",size = "Pct. Exp.", x="", y="")+scale_y_discrete(position = "left")+
+  guides(size=guide_legend(override.aes=list(shape=21, colour="black", fill="black")))+ theme(legend.title=element_text(size=12))
+plt_aEC_dotplot<-plt_aEC_dotplot + scale_radius()
