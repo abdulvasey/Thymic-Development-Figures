@@ -1,0 +1,87 @@
+library(tidyverse)
+library(RColorBrewer)
+library(SingleCellExperiment)
+library(Seurat)
+library(DelayedMatrixStats)
+library(tidyverse)
+library (slingshot)
+library(ggrepel)
+
+###Seurat of thymic epithelial cells from all stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode:age) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+  column_to_rownames("barcode")
+
+Idents(srt)<-'cellType'
+
+###adding tspace data to seurat object (ts_df dataframe is from Fig. 5A)
+tembeds<- ts_df[c("1","2")]
+tembeds <- tembeds %>% 
+  rename('1'="tspace_1",
+         '2'="tspace_2")
+tembeds<- as.matrix(tembeds)
+rownames (tembeds)<- colnames(srt)
+srt[["tspace"]] <- CreateDimReducObject(embeddings = tembeds, key = "tspace_", assay = DefaultAssay(srt))
+
+srt_sub <- subset(srt,idents=c("cTEC", "Cycling TEC","mcTEC","mTEC 1"))
+
+
+##converting to SCE to run slingshot
+sce <- as.SingleCellExperiment(srt_sub, assay = "RNA")
+
+
+tsUMAP_mtx <- as.data.frame(sce@colData) %>% 
+  rownames_to_column("barcode") %>% 
+  left_join(ts_df, by = "barcode") %>% 
+  dplyr::select(barcode, tsUMAP1=`1`,tsUMAP2=`2`) %>% 
+  column_to_rownames("barcode") %>% 
+  as.matrix()
+reducedDims(sce)$tsUMAP <- tsUMAP_mtx
+
+##Running slingshot
+sce <- slingshot(sce, clusterLabels = 'cellType', reducedDim = 'tsUMAP',  start.clus= 'Cycling TEC')
+
+
+###slingshot curve values
+crvs<-slingCurves(sce,as.df = TRUE)
+
+##ordering seurat
+ord<-c("Cycling TEC","mcTEC",'cTEC',"mTEC 1",'mTEC 2','mTEC 3/4','TEC myo/neuro','Parathyroid')
+Idents(srt)<-'cellType'
+srt@active.ident<-factor(srt@active.ident,levels=ord)
+new.cluster.ids <- c("Cycling TEC","mcTEC",'cTEC',"mTECI",'mTECII','mTECIII/IV','TEC myo/neuro','Parathyroid')
+names(new.cluster.ids) <- levels(srt)
+srt <- RenameIdents(srt, new.cluster.ids)
+
+
+###greying out mTECII/III/IV
+cells<-WhichCells(srt,idents = c("Cycling TEC","mcTEC",'cTEC',"mTECI",'mTECII','mTECIII/IV'))
+
+p<-DimPlot(srt, reduction = "tspace",cells=cells,cols = c('#FB836F' , '#C1549C','#DEA200' , '#7E549F' ,  'grey90','grey90'),shuffle=TRUE,pt.size = 0.5)+NoLegend()+ ylim(-12, 10)+xlim(-14, 13)
+m<-DimPlot(srt,reduction='tspace',combine=FALSE)
+z<-m[[1]][["data"]]
+df_median <- z %>% 
+  group_by_at(vars(c(ident))) %>% 
+  summarise_at(vars(contains("tspace")), ~ median(., na.rm = T))
+###removing labeling for greyed out clusters
+df_median<-head(df_median,-4)
+
+
+plt<-p[[1]] 
+
+
+path1<- subset(crvs,crvs$Lineage==1)
+path2<- subset(crvs,crvs$Lineage==2)
+plt2<-plt + 
+  geom_path(data=path1,aes(tsUMAP1,tsUMAP2), size=1.5, color = "black")+ theme(plot.title = element_blank())+
+  geom_path(data=path2,aes(tsUMAP1,tsUMAP2), size=1.5, color = "black")+ theme(plot.title = element_blank())+
+  NoLegend()+NoAxes()+
+  geom_text_repel(data=df_median,size=5,min.segment.length = 0,force=20,force_pull = 0.2,aes(tspace_1,tspace_2,label=ident,bg.color = "white", bg.r = 0.2,size=20),color="black", show.legend = F)+ theme(legend.text = element_text(size=20))+
+  scale_x_reverse(limits=c(13,-14))+coord_fixed(ratio = 0.65)
+plt2
