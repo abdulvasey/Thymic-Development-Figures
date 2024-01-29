@@ -1,0 +1,193 @@
+library(tidyverse)
+library(Seurat)
+library(SingleCellExperiment)
+library(slingshot)
+library(tradeSeq)
+library(cowplot)
+library(ggrastr)
+library(pheatmap)
+library(ggplot2)
+library(clusterExperiment)
+library(tidyverse)
+library(Seurat)
+library(biomaRt)
+library(tidyverse)
+library(Seurat)
+library(pheatmap)
+library(cowplot)
+library (dendsort)
+library(ggdendro)
+library(dplyr)
+library(ggrepel)
+library (tradeSeq)
+
+###Seurat of thymic epithelial cells from all stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode:age) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+  column_to_rownames("barcode")
+
+Idents(srt)<-'cellType'
+
+###adding tspace data to seurat object (ts_df dataframe is from Fig. 5A)
+tembeds<- ts_df[c("1","2")]
+tembeds <- tembeds %>% 
+  rename('1'="tspace_1",
+         '2'="tspace_2")
+tembeds<- as.matrix(tembeds)
+rownames (tembeds)<- colnames(srt)
+srt[["tspace"]] <- CreateDimReducObject(embeddings = tembeds, key = "tspace_", assay = DefaultAssay(srt))
+
+srt_sub <- subset(srt,idents=c("cTEC", "Cycling TEC","mcTEC","mTEC 1"))
+
+
+##converting to SCE to run slingshot
+sce <- as.SingleCellExperiment(srt_sub, assay = "RNA")
+
+
+tsUMAP_mtx <- as.data.frame(sce@colData) %>% 
+  rownames_to_column("barcode") %>% 
+  left_join(ts_df, by = "barcode") %>% 
+  dplyr::select(barcode, tsUMAP1=`1`,tsUMAP2=`2`) %>% 
+  column_to_rownames("barcode") %>% 
+  as.matrix()
+reducedDims(sce)$tsUMAP <- tsUMAP_mtx
+
+##Running slingshot
+sce <- slingshot(sce, clusterLabels = 'cellType', reducedDim = 'tsUMAP',  start.clus= 'Cycling TEC')
+
+
+####list of transcription factors (Aerts Lab)
+file_path="allTFs_hg38.txt"
+TF <- scan(file_path, what = character(), sep = "\n")
+
+##isolating all transcription factors
+allgenes <- intersect(rownames(srt_sub),TF)
+
+###Running Tradeseq's fitGAM function
+sce_thymus <- sce
+pseudotime <- slingPseudotime(sce_thymus, na = F)
+pseudotime[is.na(pseudotime)] <- 0
+cellWeights <- slingCurveWeights(sce_thymus)
+Counts <- counts(sce_thymus)[allgenes,]
+Counts <- as.matrix(Counts)
+sce1 <- fitGAM(counts = Counts, 
+               pseudotime = pseudotime,
+               cellWeights = cellWeights,
+               nknots = 6, verbose = TRUE)
+
+#####isolating position of knots
+plt<-plotGeneCount(curve = sce, clusters = sce$cellType, models = sce1)
+pts_df<-plt[["layers"]][[4]][["data"]]
+
+###pseudotime values for lineages
+pseudotime<-slingPseudotime(sce)
+
+
+
+######constructing umaps found above heatmaps
+srt2<-srt
+
+srt2@meta.data <- srt2@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode:cellType_macro) %>% 
+  left_join(psuedotime %>% dplyr::select(barcode, Lineage1,Lineage2)) %>% 
+  column_to_rownames("barcode")
+
+
+##lineage 1 umap
+m<-FeaturePlot(srt2,features = "Lineage1",reduction = 'tspace')
+
+path1<- subset(crvs,crvs$Lineage==1)
+colnames(path1)<-c('tsUMAP1','tsUMAP2')
+
+#isolating knot coordinates specific to lineage 1
+pts1<- pts_df[1:6, ]
+
+###isolating region between knots 2,3
+twothree<-subset(path1,path1$tsUMAP2>0.6611399 & path1$tsUMAP2<3.1572219)
+colnames(twothree)<-c('tsUMAP1','tsUMAP2')
+
+m1<-m+ scale_color_gradientn(colours=c('#FFE8C0','purple'),na.value = "grey90")+geom_path(data=path1,aes(tsUMAP1,tsUMAP2),linetype='21', size=1, color = "black")+
+  geom_path(data=twothree,aes(tsUMAP1,tsUMAP2),size=1, color = "yellow")+
+  geom_point(data = pts1,aes(dim1,dim2),color='black',size=2)+NoAxes()+ theme(plot.title = element_blank())
+m1<-m1+scale_x_reverse(limits=c(13,-14))+coord_fixed(ratio = 0.7)+ ylim(-12, 10)
+m1
+
+
+
+
+##lineage 2 umap
+m<-FeaturePlot(srt2,features = "Lineage2",reduction = 'tspace')
+
+path1<- subset(crvs,crvs$Lineage==2)
+
+#isolating knot coordinates specific to lineage 2
+pts1<- pts_df[7:12, ]
+
+###isolating region between knots 2,3
+twothree<-subset(path1,path1$tsUMAP1>2.3387857 & path1$tsUMAP1<4.662023)
+
+m1<-m+ scale_color_gradientn(colours=c('#FFE8C0','purple'),na.value = "grey90")+geom_path(data=path1,aes(tsUMAP1,tsUMAP2),linetype='21', size=1, color = "black")+
+  geom_path(data=twothree,aes(tsUMAP1,tsUMAP2),size=1, color = "yellow")+
+  geom_point(data = pts1,aes(dim1,dim2),color='black',size=2)+NoAxes()+ theme(plot.title = element_blank())
+m1<-m1+scale_x_reverse(limits=c(13,-14))+coord_fixed(ratio = 0.7)+ ylim(-12, 10)
+m1
+
+
+
+
+####heatmaps
+
+#finding differential gene expression between knots 2,3
+earlyDE_23 <- earlyDETest(sce1, knots = c(2,3)) %>% arrange(desc(waldStat))
+
+##selected genes shown in figure
+genes<-c('PGAM2', 'SCX', 'ASCL2', 'KDM4B', 'FOXN1', 'MXD4', 'PAX1', 'NFKB1', 'HMG20B', 'ETFB', 'HES4', 'HIVEP3', 'ETV7', 'ARID5B', 'STAT1', 'IRF7', 'IRF9', 'BHLHE40', 'TAGLN2', 'PML', 'SP100', 'SP110', 'ZNF267')
+####index of cells in in order of pseudotime 2
+pst.ord <- order(sce$slingPseudotime_2, na.last = NA)
+#rolling avg of expression matrix
+df<-assays(sce)$scaledata[genes,]
+heatdata <- df[, pst.ord]
+rolling_average<- t(heatdata)
+rolling_average<-rollapply(rolling_average,width=1000,FUN = mean,fill=NA,align="right")
+rownames(rolling_average)<-colnames(heatdata)
+rolling_average2<- t(rolling_average)
+#metadata for cell ordering/annotation
+Cluster<-sce$cellType[pst.ord]
+metadata2<- data.frame(Cluster)
+rownames(metadata2)<- colnames(heatdata)
+Cluster        <- c('#DEA200' ,  '#FB836F'  , '#C1549C'  , '#7E549F')
+names(Cluster) <- c("cTEC", "Cycling TEC","mcTEC","mTEC 1")
+anno_colors2 <- list(Cluster = Cluster)
+##pheatmap
+breaksList = seq(-0.6, 0.6, by = 0.001)
+pheatmap(rolling_average2, show_colnames = F,cluster_cols = F,cluster_rows = F,scale = 'none',
+         annotation_col = metadata2,annotation_colors = anno_colors2,treeheight_row=0,color = colorRampPalette(rev(brewer.pal(11, "Spectral")))(1201),breaks = breaksList)
+
+
+####index of cells in in order of pseudotime 1
+pst.ord <- order(sce$slingPseudotime_1, na.last = NA)
+#rolling avg of expression matrix
+df<-assays(sce)$scaledata[genes,]
+heatdata <- df[, pst.ord]
+rolling_average<- t(heatdata)
+rolling_average<-rollapply(rolling_average,width=1000,FUN = mean,fill=NA,align="right")
+rownames(rolling_average)<-colnames(heatdata)
+rolling_average2<- t(rolling_average)
+#metadata for cell ordering/annotation
+Cluster<-sce$cellType[pst.ord]
+metadata2<- data.frame(Cluster)
+rownames(metadata2)<- colnames(heatdata)
+Cluster        <- c('#DEA200' ,  '#FB836F'  , '#C1549C'  , '#7E549F')
+names(Cluster) <- c("cTEC", "Cycling TEC","mcTEC","mTEC 1")
+anno_colors2 <- list(Cluster = Cluster)
+##pheatmap
+breaksList = seq(-0.6, 0.6, by = 0.001)
+pheatmap(rolling_average2, show_colnames = F,cluster_cols = F,cluster_rows = F,scale = 'none',
+         annotation_col = metadata2,annotation_colors = anno_colors2,treeheight_row=0,color = colorRampPalette(rev(brewer.pal(11, "Spectral")))(1201),breaks = breaksList)
