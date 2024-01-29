@@ -28,15 +28,12 @@ srt@meta.data <- srt@meta.data %>%
 
 srt <- SetIdent(srt, value = srt@meta.data$group_label)
 
-f <-table(srt@active.ident, srt@meta.data$orig.ident)
-
-
-
 exprMat <- srt@assays$RNA@data
 cellInfo <- srt@meta.data
 
-loci1 <- which(rowSums(exprMat) > 1*.01*ncol(exprMat))
-exprMat_filter <- exprMat[loci1, ]
+###filtering genes
+genes <- which(rowSums(exprMat) > 1*.01*ncol(exprMat))
+exprMat_filter <- exprMat[genes, ]
 
 
 loom <- build_loom("all_hori_epi.loom", dgem=exprMat_filter)
