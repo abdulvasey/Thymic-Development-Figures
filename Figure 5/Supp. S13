@@ -1,0 +1,63 @@
+library(tidyverse)
+library(Seurat)
+library(SingleCellExperiment)
+library(slingshot)
+library(tradeSeq)
+library(cowplot)
+library(ggrastr)
+library(pheatmap)
+library(ggplot2)
+library(clusterExperiment)
+library(tidyverse)
+library(Seurat)
+library(biomaRt)
+library(tidyverse)
+library(Seurat)
+library(pheatmap)
+library(cowplot)
+library (dendsort)
+library(ggdendro)
+library(dplyr)
+srt <- readRDS("/Users/avymohd/Documents/Single Cell Analysis/Seurats from Ben/RNAonly_all_verticalmacro.RDS")
+
+
+meta <- read_csv("/Users/avymohd/Documents/Single Cell Analysis/Vertical Analysis/compiled_vertical_metadata copy.csv")
+
+
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode:age) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+  column_to_rownames("barcode")
+
+srt <- SetIdent(srt, value = srt@meta.data$cellType)
+
+ts_df <- readRDS("/Users/avymohd/Downloads/allCell_tSpace_umap_2D.RDS")
+tembeds<- ts_df[c("1","2")]
+tembeds <- tembeds %>% 
+  rename('1'="tSpace UMAP_1",
+         '2'="tSpace UMAP_2")
+tembeds<- as.matrix(tembeds)
+rownames (tembeds)<- colnames(srt)
+srt[["tspace"]] <- CreateDimReducObject(embeddings = tembeds, key = "tSpaceUMAP_", assay = DefaultAssay(srt))
+srt<-subset(srt,idents=c('TEC myo/neuro','Parathyroid'),invert=TRUE)
+srt<-subset(srt,idents=c('mTEC 3/4','mTEC 2'),invert=TRUE)
+srt@active.ident<-factor(srt@active.ident,levels = c("Cycling TEC","mcTEC",'cTEC',"mTEC 1"))
+
+mtechi<-WhichCells(srt,idents='mTEC 1',expression=CCL19>4)
+ctechi<-WhichCells(srt,idents='cTEC',expression=PRSS16>4)
+lst<-list(mtechi,ctechi)
+DimPlot(srt,reduction = 'tspace',cells.highlight = lst,shuffle = TRUE,cols = "grey90",sizes.highlight = 0.1,cols.highlight = c('#DEA200' , '#7E549F'))
+DimPlot(srt,reduction = 'tspace',cells.highlight = ctechi,shuffle = TRUE,sizes.highlight = 0.1)
+
+p1<-FeaturePlot(srt,reduction = 'tspace',features = 'CCL25')+scale_color_viridis_c(option = 'turbo')+ theme(plot.title = element_text(face = 'plain'))+scale_x_reverse()
+p2<-FeaturePlot(srt,reduction = 'tspace',features = 'PRSS16')+scale_color_viridis_c(option = 'turbo')+ theme(plot.title = element_text(face = 'plain'))+scale_x_reverse()
+p3<-FeaturePlot(srt,reduction = 'tspace',features = 'PSMB11')+scale_color_viridis_c(option = 'turbo')+ theme(plot.title = element_text(face = 'plain'))+scale_x_reverse()
+p4<-FeaturePlot(srt,reduction = 'tspace',features = 'CCL19')+scale_color_viridis_c(option = 'turbo')+ theme(plot.title = element_text(face = 'plain'))+scale_x_reverse()
+p5<-FeaturePlot(srt,reduction = 'tspace',features = 'CCL21')+scale_color_viridis_c(option = 'turbo')+ theme(plot.title = element_text(face = 'plain'))+scale_x_reverse()
+p6<-FeaturePlot(srt,reduction = 'tspace',features = 'KRT15')+scale_color_viridis_c(option = 'turbo')+ theme(plot.title = element_text(face = 'plain'))+scale_x_reverse()
+p7<-DimPlot(srt,reduction = 'tspace',cells.highlight = lst,shuffle = TRUE,cols = "grey90",sizes.highlight = 0.1,cols.highlight = c('#DEA200' , '#7E549F'))+scale_x_reverse()+ NoLegend()
+color_key = c('#FB836F' , '#C1549C','#DEA200' , '#7E549F' )
+p8<-DimPlot(srt,reduction = 'tspace',shuffle = TRUE,cols = color_key)+scale_x_reverse()+ NoLegend()
