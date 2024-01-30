@@ -1,0 +1,218 @@
+library(tidyverse)
+library(Seurat)
+library(tSpace)
+library(umap)
+library(SCopeLoomR)
+library(igraph)
+library (ggplot2)
+library (ggnetwork)
+library (igraph)
+
+
+###Seurat of thymic epithelial cells from all stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode:age) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+  column_to_rownames("barcode")
+srt <- SetIdent(srt, value = srt@meta.data$cellType)
+
+####Isolating populations with high canonical cortical and medullary expression
+Idents(srt, WhichCells(srt, expression = CCL19 > 4,idents = 'mTEC 1', slot = 'data')) <- 'mtec high'
+Idents(srt, WhichCells(srt, expression = PRSS16 > 4,idents = 'cTEC', slot = 'data')) <- 'ctec high'
+
+
+##subsetting population
+srts<-subset(srt,idents = c('ctec high','mtec high'))
+####finding differential genes
+marks<-FindAllMarkers(srts)
+
+
+###SCENIC of mtec and ctec hi populations
+
+exprMat <- srts@assays$RNA@data
+
+###filtering genes
+genes <- which(rowSums(exprMat) > 1*.01*ncol(exprMat))
+exprMat_filter <- exprMat[genes, ]
+
+
+loom <- build_loom("all_vert_hi_epi.loom", dgem=exprMat_filter)
+
+
+##### Python3
+
+#!/bin/sh
+#SBATCH --job-name=vert_hizontal
+#SBATCH -N 1      # nodes requested
+#SBATCH -c 32      # cores requested
+#SBATCH --mem-per-cpu=8000
+#SBATCH -o outfile_vert_hi  # send stdout to outfile
+#SBATCH -e errfile_vert_hi  # send stderr to errfile
+#SBATCH -t 24:00:00  # time requested in hour:minute:second
+
+module load python/3.9.0
+pyscenic grn "/path/all_vert_hi_epi.loom" "/path/allTFs_hg38.txt" -o vert_hi_adj.csv --num_workers 18
+
+module load python/3.9.0
+pyscenic ctx \
+"/path/vert_hi_adj.csv" \
+"/path/hg38__refseq-r80__10kb_up_and_down_tss.mc9nr.genes_vs_motifs.rankings.feather" \
+--annotations_fname "/path/motifs-v9-nr.hgnc-m0.001-o0.0.tbl" \
+--expression_mtx_fname "/path/all_vert_hi_epi.loom" \
+--output vert_hi_reg.csv \
+--mask_dropouts \
+--num_workers 20
+
+module load python/3.9.0
+pyscenic aucell \
+"/path/all_vert_hi_epi.loom" \
+"/path/vert_hi_reg.csv"\
+--output vert_hi_scenic.csv \
+--num_workers 1
+#### 
+
+
+####network construction
+adj<-read.csv("/path/vert_hi_adj.csv")
+####connections.csv is generated in SCENIC adjacencies.ipynb
+edges <- read.csv("/path/connections.csv", header =FALSE)
+
+
+#####adding GRNBoost2 importance score to adj df
+adj$id <- paste(adj$TF,adj$target)
+edges$id<- paste(edges$V1,edges$V2)
+
+
+full<-inner_join(adj, edges, by = "id") 
+
+full = subset(full, select = -c(id,V1,V2) )
+colnames(full) <- c("v1", "v2","weight")
+edges<-full
+edges <- as.matrix(edges)
+
+
+###setting minimum coexpression value threshold for matrix
+full2<-subset(full, full$weight>5)
+
+
+####ensuring regulons shown have a minimum of 5 connections
+tally<-as.data.frame(table(full2$v1))
+sub<-subset(tally,tally$Freq>4)
+full2 <- full2[full2$v1 %in% sub$Var1, ]
+
+edges<-full2
+edges <- as.matrix(edges)
+set.seed(123)
+
+##igraph setup
+b<-graph_from_data_frame(edges,directed = FALSE)
+
+###gathering list of regulon defining TFs
+reg<-unique(full2$v1)
+
+
+#markers
+marks3<-subset(marks2,marks2$cluster=='mtec high')
+marks4<-subset(marks3,marks3$avg_log2FC>0)
+marks5<-subset(marks2,marks2$cluster=='ctec high')
+marks6<-subset(marks5,marks5$avg_log2FC>0)
+mt<-marks4$gene[1:400]
+ct<-marks6$gene[1:400]
+##markers for mtec hi
+mt<-c('CCL19', 'KRT15', 'IFITM3', 'KRT13', 'FN1', 'TMSB4X', 'CXCL14', 'BCAM', 'S100A11', 'LY6E', 'RPL28', 'RPS3', 'RPL18A', 'RPL12', 'RPL13', 'RPS23', 'RPS19', 'RPS3A', 'RPS15', 'RPL10', 'KRT17', 'VIM', 'ARID5B', 'CD9', 'RPL30', 'RPL32', 'RPS14', 'EEF1A1', 'RPL21', 'RPL14', 'RPS5', 'RPL18', 'RPS12', 'KRT19', 'RPS6', 'IFI6', 'TNC', 'RPL10A', 'S100A6', 'RPL15', 'RPS27', 'RPS27A', 'RPL7A', 'RPS8', 'RACK1', 'TMEM173', 'MARCKSL1', 'RPS9', 'RPL23A', 'TPT1', 'RPS4X', 'RPL37', 'PSME1', 'SFN', 'HNRNPA1', 'RPLP2', 'RPL8', 'RPS16', 'TIMP1', 'CCDC3', 'RPS18', 'CLU', 'RPS25', 'RPL19', 'RPL41', 'ECE1', 'RPL37A', 'RPLP0', 'RPL26', 'DCN', 'CARHSP1', 'RPL34', 'RPL36', 'PHLDA1', 'EPCAM', 'NPM1', 'ANGPT2', 'RAB13', 'ZFAS1', 'RPL9', 'MYL9', 'EEF1B2', 'ACKR1', 'RPSA', 'RPL39', 'SGK1', 'RPL35A', 'RPL5', 'CCL21', 'PTMS', 'RPLP1', 'RPL29', 'IFITM1', 'KRT14', 'SSTR2', 'RPL7', 'ALPK2', 'DCC', 'IGFBP7', 'TPM2', 'UGCG', 'FXYD3', 'RPS2', 'RPL13A', 'CYBA', 'RPS13', 'RPS28', 'BST2', 'SCARA3', 'PARM1', 'DMKN', 'LTB', 'LAP3', 'LAMB3', 'CTSH', 'SMIM1', 'RPL24', 'NOP53', 'SOD2', 'CLDN4', 'MCAM', 'FAU', 'COL18A1', 'S100A10', 'IRF7', 'ID2', 'DEK', 'LSP1', 'RPL35', 'RPS7', 'WFDC2', 'MTSS1', 'CRIP2', 'SLC4A4', 'ANKRD29', 'NAV2', 'PPP2R2C', 'ISG15', 'LTBP1', 'MSI2', 'HES4', 'CNN2', 'RPL4', 'TYW3', 'RPL22', 'XAF1', 'GABRA5', 'GYPC', 'SCD5', 'MFGE8', 'CACNA2D1', 'SELENOM', 'AC012668.3', 'LGALS3', 'GSN', 'IFI44L', 'S100A2', 'PPDPF', 'BTF3', 'EEF1D', 'RPS21', 'RPS11', 'CH25H', 'ANXA3', 'CAVIN1', 'SPIB', 'FSCN1', 'STXBP6', 'C3', 'TPM4', 'CADM1', 'IL3RA', 'NPR3', 'FAM3B', 'CHI3L1', 'SLPI', 'SYNPO2', 'ADAM23', 'RABAC1', 'RPL3', 'SNHG8', 'RGS17', 'TMEM176B', 'RPL27A', 'HEY1', 'TAF1D', 'RPS29', 'GATM', 'PCBD1', 'HIVEP3', 'ADAM12', 'CSRP2', 'LMO4', 'CTSC', 'SLCO3A1', 'ST14', 'NTRK2', 'SOX4', 'RNF19A', 'MX1', 'ING1', 'FGD6', 'CPAMD8', 'BCL2', 'KLF4', 'RPL38', 'IL23A', 'IFIT1', 'BTG1', 'ATF4', 'PRRX1', 'CLIP3', 'MCC', 'TP73', 'STOM', 'INSM1', 'H1F0', 'STMN3', 'SLC34A2', 'HERC6', 'C2CD4B', 'RPL6', 'CAPG', 'SEMA3E', 'CLDN7', 'TNFRSF12A', 'PRPS2', 'RAB38', 'MX2', 'TMEM233', 'MAPK13', 'LYPD1', 'RPL23', 'FCGRT', 'VSIR', 'CXCL9', 'STOX1', 'ANXA4', 'CXCL10', 'NECTIN2', 'CXCL11', 'ITM2C', 'EIF3E', 'SNCAIP', 'SMCO4', 'SINHCAF', 'FAM210B', 'TM4SF1', 'HTRA1', 'ANP32B' )
+##markers for ctec hi
+ct<-c('PRSS16', 'CCL25', 'GNG11', 'PITHD1', 'CTSV', 'TBATA', 'PLTP', 'PGAM2', 'PEMT', 'PSMB11', 'LY75', 'SLC46A2', 'CST3', 'OXCT1', 'FABP5', 'COX7A1', 'TP53AIP1', 'HMG20B', 'ETFB', 'SOD3', 'GAA', 'RAB42', 'CD83', 'AC084816.1', 'SNX29', 'SYNE1', 'CXCL12', 'FAM107A', 'MUC3A', 'FAM50A', 'PLOD2', 'ATP10B', 'ETNK1', 'PSIP1', 'DYSF', 'TP53I3', 'C20orf204', 'BCAS4', 'GLRX', 'FRMD1', 'CSTB', 'CCDC80', 'PSMB5', 'MDK', 'AL606807.1', 'HLA-DMA', 'PLGRKT', 'PASK', 'CNN3', 'PITRM1', 'PSMB6', 'GHRH', 'PSMA7', 'PNMA8A', 'NPTX1', 'CYP26B1', 'PRDX5', 'KCNIP3', 'MFSD12', 'NEURL2', 'OXCT2', 'KIAA1549', 'PDLIM1', 'CLEC2L', 'STARD9', 'S100A14', 'RTBDN', 'HDAC4', 'AATBC', 'SPX', 'ENPEP', 'SLC46A1', 'TNFRSF17', 'PLPP2', 'IGDCC3', 'FBLN7', 'LRRC10B', 'PODN', 'CD1D', 'CFC1', 'PPP1R2', 'CDH23', 'SPOCK2', 'METTL26', 'KIF12', 'NFKB1', 'PLEK2', 'HLA-DPB1', 'HLA-DQB1', 'IQSEC3', 'ATP6V0E2', 'GPLD1', 'HLA-DQA1', 'SLC6A8', 'AC087392.1', 'PSMB1', 'PPFIA3', 'RHBDL1', 'HPGD', 'HAO2', 'HLA-DPA1', 'SLC36A1', 'KCNJ5', 'SLC17A8', 'SPOCK1', 'GGA2', 'PCSK6', 'GGA1', 'HLA-DRA', 'CLIC3', 'TBCD', 'CLN8', 'NSMAF', 'BNIP3', 'MYO1C', 'C14orf93', 'CFHR1', 'PNCK', 'PAX1', 'NPIPB2', 'GCHFR', 'MGMT', 'DPP6', 'HAGH', 'C12orf56', 'TLN2', 'GAMT', 'WDR1', 'IGSF3', 'LYPLA2', 'SPATS2L', 'LGALS1', 'AC084819.1', 'CYB5R1', 'RAB3IL1', 'OST4', 'VMO1', 'PLCD1', 'HIST1H2AC', 'CNTFR', 'GPR35', 'APOBEC2', 'CHMP1B', 'EHBP1L1', 'ZBED2', 'SCX', 'VWCE', 'ACADVL', 'MGST3', 'SLC6A1', 'KCNC3', 'PIK3IP1', 'MPP5', 'CAMKK1', 'FAM163A', 'BLVRB', 'NAGK', 'MAP7D2', 'IQGAP2', 'SLCO5A1', 'CD274', 'IDI1', 'TXLNB', 'SORBS2', 'PDLIM7', 'KRT8', 'ACO1', 'RTN4', 'MCF2L', 'PLEKHJ1', 'PSMA4', 'PSMA3', 'ATP5MD', 'CCR10', 'POMP', 'COL11A2', 'HLA-DMB', 'LAMP2', 'UQCR10', 'PTPRT', 'SQSTM1', 'LINC00891', 'LAMB1', 'NDUFA4', 'ZFYVE21', 'RTN4RL2', 'LEPR', 'DNASE2', 'EYA2', 'CBX4', 'CDC42EP5', 'LNPK', 'PSMB2', 'DIAPH2', 'NEU3', 'TRAPPC12', 'SLIT3', 'PRSS8', 'CLTB', 'GALNT11', 'DNASE1L2', 'C4orf50', 'ATP5PF', 'HIST1H4H', 'CCDC150', 'CLEC1A', 'N4BP2L1', 'EDNRA', 'CALML3', 'PTRH1', 'ASCL2', 'PSMD8', 'RMDN2-AS1', 'AL390729.1', 'NEURL3', 'USP54', 'TMEM130', 'C11orf16', 'SSPN', 'RIPOR2', 'PXK', 'AKR1B10', 'PNMA8B', 'NINJ1', 'PSMC1', 'LIMS1', 'ATP6V0D1', 'CLTA', 'RASD1', 'GFOD1', 'CDIP1', 'IRS4', 'CXXC5', 'PLXDC1', 'SLC39A2', 'BCAP29', 'CLTC', 'MXD4', 'CD74', 'ARHGAP28', 'ANGPTL2', 'PART1', 'AC007325.4', 'MAPK4', 'DLL4', 'NUPR1', 'SOD1', 'CCDC144A', 'SLC44A3', 'DYNC1I1')
+
+ct<-ct[! ct %in% reg]
+mt<-mt[! mt %in% reg]
+lst<-list(ct,mt,reg)
+
+###ggnetwork setup
+y2<- ggnetwork(b,igraph::layout_with_fr(b))
+
+
+##assigning labels for nodes
+new = c()
+for (val in y2$name){
+  for (x in c(1:3)){
+    if (val %in% lst[[x]]){
+      new <- append (new,as.character(x))
+    }
+  } 
+}
+
+
+
+
+y2$leid <- new
+set.seed(129)
+
+##select list of genes to be labeled
+select<-c('IFIT1','IFITM1','IFITM3','ISG15','IRF8','FOXN1','PAX1','CXCL12','PRSS16','CCL25','PSMB11','CCL19','NFKB1','IRF7','IRF9','STAT1','SPIB','JUNB','JUND','SOX4','NFKB1','ASCL2','SREBF1','CCL21','KRT15','HDAC4','CYP26B1','CREB3L1','RELB','CXCL14','CXCL10','CXCL9','IRF1','SPOCK2','KRT13','KRT14','KRT17','MX1','CLDN4','RPS2','RPL23','FABP5','LY75','RPL28', 'RPS3', 'RPL18A', 'RPL12', 'RPL13', 'RPS23', 'RPS19', 'RPS3A', 'RPS15', 'RPL10','CEBPB','HES4','BHLHE40','CXCL11','CXCL12','CXCL14')
+
+e<-c(reg,mt[1:10],ct[1:10],select)
+e<-unique(e)
+
+##ggnetwork construction
+plt<-ggplot(y2, aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_edges(color="black",size=0.02) +
+  geom_nodes(aes(color = leid), size = 1.5)+
+  geom_nodelabel_repel(aes(color = leid,label = name),
+                       size = 3.5,data = y2[y2$name %in% e,],force = 5, max.overlaps = Inf) +
+  scale_colour_manual(values = rhg_cols) +
+  theme_blank() 
+plt
+
+
+
+
+
+#####heatmap of marker ratios
+df<-full2
+ratios <- data.frame(TF = unique(full3$v1))
+colnames(df)<-c('TF','Targets','Importance Score')
+ratios <- data.frame(TF = unique(full2$v1))
+for (tf in ratios$TF) {
+  tf_targets <- unique(df$Targets[df$TF == tf])
+  ratio <- (length(intersect(tf_targets, ct))-length(intersect(tf_targets, mt))) / length(tf_targets)
+  total_targets <- length(tf_targets)
+  ratios[ratios$TF == tf, "Ratio"] <- ratio
+  ratios[ratios$TF == tf, "Total_Targets"] <- total_targets
+}
+
+
+ratios <- ratios %>% arrange(Ratio)
+ratios <- ratios %>% arrange(Total_Targets)
+sorted_df1 <- subset(ratios,ratios$Ratio<0) %>%
+  arrange(Ratio, desc(Total_Targets))
+sorted_df2 <- subset(ratios,ratios$Ratio>0) %>%
+  arrange(Ratio, desc(-Total_Targets))
+
+ord<-c(sorted_df1$TF,'CREB5',sorted_df2$TF)
+ratios$TF<-factor(ratios$TF,levels = rev(ord))
+
+
+heatmap_plot <- ggplot(ratios, aes(x = 1, y = TF, fill = Ratio)) +
+  geom_tile(linewidth=0) + 
+  scale_fill_gradientn(colors=c('#7E549F','white','#DEA200')) +
+  theme_minimal() +
+  theme(axis.title = element_blank())
+heatmap_plot
+
+
+
+########dotplot construction
+
+##genes vector refers to regulons found in network/ordered according to heatmap
+genes<-c('SREBF1', 'NFKB1', 'ASCL2', 'MAFG', 'REST', 'FOXN1', 'REL', 'ATF3', 'IRF8', 'CREB5', 'RELB', 'JUN', 'JUND', 'JUNB', 'FOSL1', 'IRF1', 'XBP1', 'STAT1', 'FOS', 'MAFF', 'FOSB', 'EGR1', 'SPIB', 'IRF7', 'BHLHE40', 'KLF5', 'KLF4', 'STAT2', 'BACH1', 'NFIL3', 'CREB3L1', 'ETV7', 'MYC', 'HIVEP3', 'SOX4', 'IRF9', 'CEBPB')
+srts<-subset(srt,idents = c('ctec high','mtec high','mcTEC'))
+srts@active.ident<-factor(srts@active.ident,levels = c('mtec high','mcTEC','ctec high'))
+plt<-DotPlot(srts,features = rev(genes),cols = c('white','darkred'))+ theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, size = 12, hjust=1,vjust=0.5,color='black'),axis.text.y = element_text( size = 12,color = 'black',face = 'italic'))+theme(axis.title.x = element_blank(),axis.title.y = element_blank())+scale_y_discrete(label=c(bquote(mTECI^High),'mcTEC',bquote(cTEC^High)))+
+  coord_flip()
+plt
