@@ -88,7 +88,8 @@ pts_df<-plt[["layers"]][[4]][["data"]]
 ###pseudotime values for lineages
 pseudotime<-slingPseudotime(sce)
 
-
+####slingshot curves
+crvs<-slingCurves(sce)
 
 ######constructing umaps found above heatmaps
 srt2<-srt
@@ -103,7 +104,8 @@ srt2@meta.data <- srt2@meta.data %>%
 ##lineage 1 umap
 m<-FeaturePlot(srt2,features = "Lineage1",reduction = 'tspace')
 
-path1<- subset(crvs,crvs$Lineage==1)
+
+path1<-as.data.frame(crvs$Lineage1$s)
 colnames(path1)<-c('tsUMAP1','tsUMAP2')
 
 #isolating knot coordinates specific to lineage 1
@@ -125,8 +127,8 @@ m1
 ##lineage 2 umap
 m<-FeaturePlot(srt2,features = "Lineage2",reduction = 'tspace')
 
-path1<- subset(crvs,crvs$Lineage==2)
 
+path1<-as.data.frame(crvs$Lineage2$s)
 #isolating knot coordinates specific to lineage 2
 pts1<- pts_df[7:12, ]
 
