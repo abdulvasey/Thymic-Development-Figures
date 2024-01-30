@@ -1,0 +1,52 @@
+library(tidyverse)
+library(reshape)
+library(viridis)
+
+
+###SCENIC adjacency output from Fig 5E
+adj<-read.csv("/path/vert_adj.csv")
+###AIRE/FEZF2 SCENIC Connections.ipynb output
+edges <- read.csv("/Users/avymohd/Documents/Single Cell Analysis/figure scripts for paper/figure 6/aire connections/AIRE AND FEZF2.csv", header =FALSE)
+
+###adding GRNBoost2 importance score to adj df
+adj$id <- paste(adj$TF,adj$target)
+edges$id<- paste(edges$V1,edges$V2)
+
+full<-inner_join(adj, edges, by = "id") 
+
+full = subset(full, select = -c(id,V1,V2) )
+colnames(full) <- c("v1", "v2","weight")
+
+
+heatmap_data<-full
+
+colnames(heatmap_data)<-c('TF','target','importance_score')
+
+
+heatmap_data$importance_score <- log(heatmap_data$importance_score)
+
+length(unique(heatmap_data$target))
+
+heatmap_matrix <- spread(heatmap_data, key = "target", value = "importance_score") %>%
+  column_to_rownames(var = "TF") %>%
+  as.matrix()
+
+
+u<-melt(heatmap_matrix)
+colnames(u)<-c('TF','target','importance_score')
+ordered_df <- u %>%
+  arrange(desc(importance_score))
+u$target<-factor(u$target,levels=c('FEZF2','AIRE'))
+u$TF<-factor(u$TF,levels=unique(ordered_df$TF))
+
+
+heatmap_plot <- ggplot(u, aes(x = TF, y = target, fill = importance_score)) +
+  geom_tile(color='white',size=1.5) +
+  scale_fill_viridis(option = 'magma',na.value = "grey95") +  # You can customize the color scale
+  labs(title = "TF-Target Interaction Heatmap") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white"))+theme(axis.text.x = element_text(angle=90))+
+  theme(axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_text(angle = 90, size = 12, hjust=1,vjust=0.5,color = 'black',face = 'italic'),axis.text.y = element_text(size = 12,color = 'black',face = 'italic'))+scale_y_discrete(position = "right")+
+  coord_fixed(ratio = 1)
+heatmap_plot
