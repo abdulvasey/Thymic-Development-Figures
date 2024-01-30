@@ -1,0 +1,259 @@
+library(tidyverse)
+library(Seurat)
+library(SingleCellExperiment)
+library(slingshot)
+library(tradeSeq)
+library(cowplot)
+library(ggrastr)
+library(pheatmap)
+library(ggplot2)
+library(clusterExperiment)
+library(tidyverse)
+library(Seurat)
+library(biomaRt)
+library(tidyverse)
+library(Seurat)
+library(pheatmap)
+library(cowplot)
+library (dendsort)
+library(ggdendro)
+library(dplyr)
+library(ggrepel)
+library (tradeSeq)
+
+###Seurat of thymic epithelial cells from all stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode:age) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+  column_to_rownames("barcode")
+
+Idents(srt)<-'cellType'
+
+###adding tspace data to seurat object (ts_df dataframe is from Fig. 5A)
+tembeds<- ts_df[c("1","2")]
+tembeds <- tembeds %>% 
+  rename('1'="tspace_1",
+         '2'="tspace_2")
+tembeds<- as.matrix(tembeds)
+rownames (tembeds)<- colnames(srt)
+srt[["tspace"]] <- CreateDimReducObject(embeddings = tembeds, key = "tspace_", assay = DefaultAssay(srt))
+
+srt_sub <- subset(srt,idents=c("cTEC", "Cycling TEC","mcTEC","mTEC 1",'mTEC 2'))
+
+
+##converting to SCE to run slingshot
+sce <- as.SingleCellExperiment(srt_sub, assay = "RNA")
+
+
+tsUMAP_mtx <- as.data.frame(sce@colData) %>% 
+  rownames_to_column("barcode") %>% 
+  left_join(ts_df, by = "barcode") %>% 
+  dplyr::select(barcode, tsUMAP1=`1`,tsUMAP2=`2`) %>% 
+  column_to_rownames("barcode") %>% 
+  as.matrix()
+reducedDims(sce)$tsUMAP <- tsUMAP_mtx
+
+##Running slingshot
+sce <- slingshot(sce, clusterLabels = 'cellType', reducedDim = 'tsUMAP',  start.clus= 'Cycling TEC')
+
+
+
+
+###SCENIC run
+
+exprMat <- srt_sub@assays$RNA@data
+
+###filtering genes
+genes <- which(rowSums(exprMat) > 1*.01*ncol(exprMat))
+exprMat_filter <- exprMat[genes, ]
+
+
+loom <- build_loom("all_vert_mtec2_epi.loom", dgem=exprMat_filter)
+
+
+##### Python3
+
+#!/bin/sh
+#SBATCH --job-name=vert_mtec2
+#SBATCH -N 1      # nodes requested
+#SBATCH -c 32      # cores requested
+#SBATCH --mem-per-cpu=8000
+#SBATCH -o outfile_vert_mtec2  # send stdout to outfile
+#SBATCH -e errfile_vert_mtec2  # send stderr to errfile
+#SBATCH -t 24:00:00  # time requested in hour:minute:second
+
+module load python/3.9.0
+pyscenic grn "/path/all_vert_mtec2_epi.loom" "/path/allTFs_hg38.txt" -o vert_mtec2_adj.csv --num_workers 18
+
+module load python/3.9.0
+pyscenic ctx \
+"/path/vert_mtec2_adj.csv" \
+"/path/hg38__refseq-r80__10kb_up_and_down_tss.mc9nr.genes_vs_motifs.rankings.feather" \
+--annotations_fname "/path/motifs-v9-nr.hgnc-m0.001-o0.0.tbl" \
+--expression_mtx_fname "/path/all_vert_mtec2_epi.loom" \
+--output vert_mtec2_reg.csv \
+--mask_dropouts \
+--num_workers 20
+
+module load python/3.9.0
+pyscenic aucell \
+"/path/all_vert_mtec2_epi.loom" \
+"/path/vert_mtec2_reg.csv"\
+--output vert_mtec2_scenic.csv \
+--num_workers 1
+#### 
+
+#####tradeseq of SCENIC regulon AUC
+reg_motif<-('/path/vert_mtec2_scenic.csv')
+sce_thymus <- sce
+pseudotime <- slingPseudotime(sce_thymus, na = F)
+pseudotime[is.na(pseudotime)] <- 0
+cellWeights <- slingCurveWeights(sce_thymus)
+srt_motif <- reg_motif %>% 
+  column_to_rownames("Cell") %>% 
+  rename_all(~str_remove(., "\\(\\+\\)")) %>% 
+  as.matrix() %>% 
+  Matrix::Matrix(sparse = T) %>% 
+  Matrix::t()
+Counts<-as.matrix(srt_motif)
+a<-rownames(pseudotime)
+Counts<-Counts[,a]
+sce1 <- fitGAM(counts = Counts, 
+               pseudotime = pseudotime,
+               cellWeights = cellWeights,
+               nknots = 6, verbose = TRUE)
+
+
+
+###pseudotime values for lineages
+pseudotime<-slingPseudotime(sce)
+
+
+
+
+
+
+######constructing umaps found above heatmap
+pseudo<-slingPseudotime(sce)
+psuedo<-as.data.frame(psuedo)
+psuedo$barcode<-rownames(psuedo)
+
+
+###adding pseudotime values to seurat
+srt2<-srt
+
+srt2@meta.data <- srt2@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode:cellType_macro) %>% 
+  left_join(psuedo %>% dplyr::select(barcode, Lineage1,Lineage2)) %>% 
+  column_to_rownames("barcode")
+
+
+
+srt2@meta.data$Lineage1[srt2@meta.data$Lineage1 == 0]<-NA
+
+crvs<-slingCurves(sce)
+path1<-as.data.frame(crvs$Lineage1$s)
+colnames(path1)<-c('tspace_1','tspace_2')
+m<-FeaturePlot(srt2,features = "Lineage1",reduction = 'tspace')
+m<-FeaturePlot(srt2,features = "AIRE",reduction = 'tspace',pt.size = 0.5)
+
+####pseudotime range corresponding to onset of AIRE expression
+pseudo_sub<-subset(psuedo,psuedo$Lineage1<28 & psuedo$Lineage1>22)
+df1<-path1
+df2<-tembeds
+
+df2<-as.data.frame(df2)
+df2 <- df2[pseudo_sub$barcode, ]
+colnames(df1)<-c('x','y')
+colnames(df2)<-c('x','y')
+max_distance <- 0.2
+distance <- function(x1, y1, x2, y2) {
+  sqrt((x1 - x2)^2 + (y1 - y2)^2)
+}
+
+#####finding points on curve that overlap with pseudotime
+near_points <- data.frame()
+for (i in 1:nrow(df1)) {
+  for (j in 1:nrow(df2)) {
+    dist <- distance(df1$x[i], df1$y[i], df2$x[j], df2$y[j])
+    if (dist <= max_distance) {
+      near_points <- rbind(near_points, cbind(df1[i, ], df2[j, ]))
+    }
+  }
+}
+
+subset_df <- subset(near_points, select = c('x','y'))
+colnames(subset_df)<-c('tspace_1','tspace_2')
+pts<-data.frame(tspace_1=c(-11.56437,-10.16484),tspace_2=c(-8.014786,-2.536896))
+m3<-m+ scale_color_gradientn(colours=c('grey90','darkgreen'),na.value = "grey90")+
+  geom_path(data=path1,aes(tspace_1,tspace_2),linetype='21', size=1, color = "black")+
+  geom_path(data=subset_df,aes(tspace_1,tspace_2), size=1, color = "yellow")+
+  geom_point(data = pts,aes(tspace_1,tspace_2),color='black',size=2)+
+  NoAxes()+ theme(plot.title = element_blank())
+m3<-m3+scale_x_reverse(limits=c(13,-14))+coord_fixed(ratio = 0.7)+ ylim(-12, 10)
+m3
+
+
+###heatmap
+
+####SCENIC AUC matrix quantile scaling
+srt_motif <- reg_motif %>% 
+  column_to_rownames("Cell") %>% 
+  rename_all(~str_remove(., "\\(\\+\\)")) %>% 
+  as.matrix() %>% 
+  Matrix::Matrix(sparse = T) %>% 
+  Matrix::t()
+
+q<- as.data.frame(srt_motif)
+
+srt_motif <- CreateSeuratObject(counts = srt_motif)
+
+srt_motif <- NormalizeData(srt_motif,normalization.method = "CLR")
+srt_motif <- FindVariableFeatures(srt_motif)
+
+
+m<-srt_motif@assays$RNA@counts
+m<-as.matrix(m)
+m<-scale_quantile(t(m))
+m<-t(m)
+
+srt_motif@assays$RNA@scale.data<-m
+
+scereg <- as.SingleCellExperiment(srt_motif, assay = "RNA")
+
+###finding differential expression of genes along pseudotime range
+start<-startVsEndTest(sce1,pseudotimeValues=c(22,28),lineages=TRUE) %>% arrange(desc(waldStat_lineage1))
+sub<-subset(start,start$pvalue_lineage1<0.05)
+
+top_genes<-rownames(sub)
+
+pst.ord <- order(sce$slingPseudotime_1, na.last = NA)
+heatdata <- assays(scereg)$scaledata[top_genes, pst.ord]
+Cluster <- sce$cellType[pst.ord]
+
+rolling_average <-  embedded %>% 
+  left_join(
+    as.data.frame(t(as.matrix(scereg@assays@data$scaledata[top_genes, ]))) %>% 
+      rownames_to_column("barcode"),
+    by = "barcode") %>%
+  column_to_rownames("barcode") %>% 
+  dplyr::select(all_of(top_genes)) %>% 
+  as.matrix() 
+rolling_average<-rollapply(rolling_average,width=700,FUN = mean,fill=NA,align="right")
+rownames(rolling_average)<-colnames(heatdata)
+rolling_average<- t(rolling_average)
+rolling_average <- rolling_average[top_genes, ]
+metadata<- data.frame(Cluster)
+rownames(metadata)<- colnames(heatdata)
+Cluster        <- c('#DEA200' ,  '#FB836F'  , '#C1549C'  , '#7E549F' ,  '#99B898')
+names(Cluster) <- c("cTEC", "Cycling TEC","mcTEC","mTEC 1","mTEC 2")
+anno_colors <- list(Cluster = Cluster)
+breaksList = seq(0, 0.7, by = 0.01)
+pheatmap(rolling_average, show_colnames = F,cluster_cols = F,cluster_rows = F,scale = 'none',
+         annotation_col = metadata,annotation_colors = anno_colors,treeheight_row=0,color = colorRampPalette(rev(brewer.pal(11, "Spectral")))(71),breaks = breaksList)
