@@ -1,0 +1,86 @@
+library(tidyverse)
+library(Seurat)
+library(SingleCellExperiment)
+library(slingshot)
+library(tradeSeq)
+library(cowplot)
+library(ggrastr)
+library(pheatmap)
+library(ggplot2)
+library(clusterExperiment)
+library(tidyverse)
+library(Seurat)
+library(biomaRt)
+library(tidyverse)
+library(Seurat)
+library(pheatmap)
+library(cowplot)
+library (dendsort)
+library(ggdendro)
+library(dplyr)
+library(ggrepel)
+library (tradeSeq)
+
+###Seurat of thymic epithelial cells from all stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode:age) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+  column_to_rownames("barcode")
+
+Idents(srt)<-'cellType'
+
+###adding tspace data to seurat object (ts_df dataframe is from Fig. 5A)
+tembeds<- ts_df[c("1","2")]
+tembeds <- tembeds %>% 
+  rename('1'="tspace_1",
+         '2'="tspace_2")
+tembeds<- as.matrix(tembeds)
+rownames (tembeds)<- colnames(srt)
+srt[["tspace"]] <- CreateDimReducObject(embeddings = tembeds, key = "tspace_", assay = DefaultAssay(srt))
+
+srt_sub <- subset(srt,idents=c("cTEC", "Cycling TEC","mcTEC","mTEC 1",'mTEC 2'))
+
+
+##converting to SCE to run slingshot
+sce <- as.SingleCellExperiment(srt_sub, assay = "RNA")
+
+
+tsUMAP_mtx <- as.data.frame(sce@colData) %>% 
+  rownames_to_column("barcode") %>% 
+  left_join(ts_df, by = "barcode") %>% 
+  dplyr::select(barcode, tsUMAP1=`1`,tsUMAP2=`2`) %>% 
+  column_to_rownames("barcode") %>% 
+  as.matrix()
+reducedDims(sce)$tsUMAP <- tsUMAP_mtx
+
+##Running slingshot
+sce <- slingshot(sce, clusterLabels = 'cellType', reducedDim = 'tsUMAP',  start.clus= 'Cycling TEC')
+
+genes<-c('HLA-A', 'HLA-B', 'HLA-C', 'HLA-E', 'HLA-F', 'HLA-DRA', 'HLA-DRB1', 'HLA-DRB5', 'HLA-DQA1', 'HLA-DQB1', 'HLA-DPA1', 'HLA-DPB1')
+
+pst.ord <- order(sce$slingPseudotime_1, na.last = NA)
+heatdata <- m[, pst.ord]
+Cluster <- sce$cellType[pst.ord]
+
+#expression matrix
+m<-assays(sce)$scaledata[genes,]
+heatdata <- m[, pst.ord]
+rolling_average<- t(heatdata)
+rolling_average<-rollapply(rolling_average,width=250,FUN = mean,fill=NA,align="right")
+rownames(rolling_average)<-colnames(heatdata)
+rolling_average2<- t(rolling_average)
+metadata2<- data.frame(Cluster)
+rownames(metadata2)<- colnames(heatdata)
+Cluster        <- c('#DEA200' ,  '#FB836F'  , '#C1549C'  , '#7E549F' ,  '#99B898')
+names(Cluster) <- c("cTEC", "Cycling TEC","mcTEC","mTEC 1","mTEC 2")
+anno_colors2 <- list(Cluster = Cluster)
+breaksList = seq(-1, 1.2, by = 0.01)
+
+pheatmap(rolling_average2, show_colnames = F,cluster_cols = F,cluster_rows = F,scale = 'none',
+         annotation_col = metadata2,annotation_colors = anno_colors2,treeheight_row=0,color = colorRampPalette(rev(brewer.pal(11, "Spectral")))(221),breaks = breaksList)
+
