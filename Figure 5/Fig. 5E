@@ -1,0 +1,102 @@
+library(tidyverse)
+library(Seurat)
+library (dplyr)
+library(tidyverse)
+library(Seurat)
+library(umap)
+
+
+##Seurat generated in Fig 5A code
+srt<-readRDS("/srt.RDS")
+
+neuromarks<-FindMarkers(srt,ident.1 = "Neuroendocrine-like",ident.2 = "Muscle-like")
+neuromarks$gene<-rownames(neuromarks)
+neuromarks <- neuromarks[order(-neuromarks$avg_log2FC),]
+neuromarks<-neuromarks$gene[1:50]
+
+
+musclemarks<-FindMarkers(srt,ident.1 = "Muscle-like",ident.2 = "Neuroendocrine-like")
+musclemarks$gene<-rownames(musclemarks)
+musclemarks <- musclemarks[order(-musclemarks$avg_log2FC),]
+musclemarks<-musclemarks$gene[1:50]
+
+
+
+library(igraph)
+
+##GRNBoost2 adjacency matrix (SCENIC step) of mTEC2/3/4 and TECmyo/neuro
+adj<-read.csv("/rareTECadj.csv")
+##inferred interactions from RcisTarget output (SCENIC step) of mTEC2/3/4 and TECmyo/neuro.
+##interactions retained were between a regulons containing atleast 15 targets from 50 neuroendocrine like and 50 muscle like markers
+##code to generate edges df is similar to process shown in Fig 6D
+edges <- read.csv("/interactions.csv", header =FALSE)
+
+library(igraph)
+
+##adding GRNboost2 importance score to edges df
+adj$id <- paste(adj$TF,adj$target)
+edges$id<- paste(edges$V1,edges$V2)
+
+full<-inner_join(adj, edges, by = "id") 
+
+full = subset(full, select = -c(id,V1,V2) )
+colnames(full) <- c("v1", "v2","weight")
+edges<-full
+edges <- as.matrix(edges)
+
+##setting a minimum threshold of GRNBoost2 importance score
+full2<-subset(full, full$weight>5)
+
+edges<-full2
+edges <- as.matrix(edges)
+set.seed(123)
+
+
+b<-graph_from_data_frame(edges,directed = FALSE)
+is_weighted(b)
+#data3 <- igraph::simplify(data2)
+#adjacency_matrix1 <- igraph::as_adjacency_matrix(data3)
+z <- cluster_leiden(b,weights = NULL,objective_function = "modularity", resolution = 0.2,n_iterations=1000)
+#communities(z)
+#plot(z,b,mark.groups = list(),vertex.size = 10,vertex.label.cex	= 0.4, edge.width = 0.1,vertex.label.font = 2,vertex.shape = "circle",vertex.label.family = "Arial", edge.color = "black",vertex.label.color = "black")
+#set.seed(123)
+plot(z,b,vertex.size = 10,vertex.label.cex	= 0.4, edge.width = 0.1,vertex.label.font = 2,vertex.shape = "circle",vertex.label.family = "Arial", edge.color = "black",vertex.label.color = "black")
+k<-communities(z)
+
+
+library (ggplot2)
+library (ggnetwork)
+library (igraph)
+set.seed(132)
+y2<- ggnetwork(b,igraph::layout_with_fr(b))
+###markers used
+muscle<-c('TTN', 'TPM2', 'ACTC1', 'MYH3', 'MYLPF', 'TNNT3', 'MYL4', 'TNNI1', 'ACTA1', 'MYL5', 'MYOG', 'CKM', 'KLHL41', 'TNNT2', 'DES', 'AC020909.2', 'TNNC1', 'NES', 'MYL1', 'TNNC2', 'TNNI2', 'NEB', 'KRT19', 'PDLIM3', 'DLK1', 'MEF2C', 'TNNT1', 'SLN', 'MYL9', 'ENO3', 'FST', 'IL32', 'YBX3', 'COX6A2', 'MEG3', 'EMC10', 'FILIP1', 'RASSF4', 'NEXN', 'ARPP21', 'SMPX', 'BLCAP', 'HSPB3', 'NEAT1', 'MEG8', 'COL19A1', 'MYBPH', 'IFITM3', 'STAC3', 'NPNT' )
+neuro<-c('NEUROD1', 'RTN1', 'GNG8', 'STMN2', 'MAP1B', 'NHLH1', 'PCSK1N', 'GKAP1', 'KLHL35', 'SH3BGRL3', 'CIB2', 'MIAT', 'SOX11', 'ARHGAP36', 'NRXN1', 'HIGD1B', 'CFAP298', 'POU4F1', 'MYO6', 'CALM1', 'BASP1', 'IRX2', 'METRN', 'PPP1R17', 'C4orf48', 'KIF19', 'GAP43', 'SSTR2', 'TAGLN3', 'SCG3', 'ELAVL4', 'CACNA1A', 'BEX1', 'IGFBP2', 'PAPSS1', 'NPDC1', 'MDM1', 'TMPRSS6', 'SELENOM', 'NLRP1', 'ARL4C', 'STMN1', 'TUBA1A', 'CHGB', 'STX1A', 'CPE', 'NKX6-2', 'SPOCK1', 'APLP1', 'STMN4' )
+tf<-full2$v1
+muscle1 <- muscle[!muscle %in% tf]
+neuro1 <- neuro[!neuro %in% tf]
+lst = list(muscle1,neuro1,tf)
+new = c()
+
+###annotation of nodes
+for (val in y2$name){
+  for (x in c(1:3)){
+    if (val %in% lst[[x]]){
+      new <- append (new,as.character(x))
+    }
+  } 
+}
+
+y2$leid <- new
+
+
+rhg_cols=c("#D95F02","darkblue","black")
+
+plt<-ggplot(y2, aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_edges(color = "grey50",size = 0.05) +
+  geom_point(aes(color = leid), size = 0.5) +
+  geom_nodelabel_repel(aes(color = leid,label = name),
+                       size = 4, max.overlaps = Inf) +
+  #scale_color_brewer(palette = "Set1") +
+  scale_colour_manual(values = rhg_cols) +
+  theme_blank()
