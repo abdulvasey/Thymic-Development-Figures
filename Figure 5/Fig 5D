@@ -1,0 +1,45 @@
+library(tidyverse)
+library(Seurat)
+library (dplyr)
+library(tidyverse)
+library(Seurat)
+library(umap)
+library(viridis)
+library(ggtext)
+library(ggplot2)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+##seurat generated in figure 5A
+srt<-readRDS("/Users/avymohd/Documents/Single Cell Analysis/figure scripts for paper/Figure7/srt.RDS")
+##seurat containing all epithelial cells
+srt2<-readRDS(file="/teconly.from.all.1.repca.reclust.int.rds")
+Idents(srt2)<-'cellType'
+srt_sub<- subset(srt2, idents="mTEC 1")
+srtlist<- SplitObject(srt, split.by = "ident")
+merged <- merge(srt_sub, srtlist)
+
+##adding mTEC1 from srt2 to srt and normalizing
+DefaultAssay(merged) <- "RNA"
+merged <- NormalizeData(merged)
+all.genes <- rownames(merged)
+merged <- ScaleData(merged, features = all.genes)
+ord <- c("mTEC 1","mTECII AIRELow", "mTECII AIRELow Cy","mTECII AIREhigh", "Post-AIRE mTECIII/IV", "Neuroendocrine-like", "Muscle-like")
+merged@active.ident<-factor(merged@active.ident,levels=ord)
+
+
+super_labels <- c(bquote('mTECI'),bquote(mTECII~AIRE^Low), bquote(mTECII~AIRE^Low~Cy),
+                  bquote(mTECII~AIRE^High),bquote('Post-AIRE mTECIII/IV'), bquote('Neuroendocrine-like'),bquote("Muscle-like"))
+
+###dotplot of marker genes
+genelist<-c("EPCAM","KRT8","KRT5","KRT10","KRT13","KRT15","KRT17","CCL19","FOXN1","TP63","CLDN3","CLDN4","CDK1","TOP2A","CENPF","AIRE","FEZF2","GRHL1","GRHL3","POU2F3","KRTDAP","IVL","SPINK5","BEX1","NEUROD1","NRXN1","MYOG","ACTA1","TTN")
+genelist<-rev(genelist)
+#DotPlot(merged,features = genelist)
+plt2<-DotPlot(merged,features = genelist,cols = c('white','darkred'))+coord_flip() + theme_minimal() +
+  theme(axis.text.x = element_text(angle=90, color='black', size = 12,hjust=1,vjust=0.5),axis.text.y = element_text(color='black', size = 12,face='italic'))+
+  theme(axis.title.x = element_blank(),axis.title.y = element_blank())+scale_y_discrete(labels =super_labels)
+plt2[["guides"]][["colour"]][["title"]]<-'Avg. Exp.'
+plt2[["guides"]][["size"]][["title"]]<-'% Exp.'
+plt2[["guides"]][["size"]][["order"]]<-2
+plt2[["guides"]][["colour"]][["order"]]<-1
