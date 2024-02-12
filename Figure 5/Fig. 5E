@@ -12,7 +12,7 @@ library(tidyr)
 library(dplyr)
 
 ##seurat generated in figure 5A
-srt<-readRDS("/Users/avymohd/Documents/Single Cell Analysis/figure scripts for paper/Figure7/srt.RDS")
+srt<-readRDS("/srt.RDS")
 ##seurat containing all epithelial cells
 srt2<-readRDS(file="/teconly.from.all.1.repca.reclust.int.rds")
 Idents(srt2)<-'cellType'
