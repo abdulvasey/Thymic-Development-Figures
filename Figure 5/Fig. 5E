@@ -13,7 +13,7 @@ library(dplyr)
 
 ##seurat generated in figure 5A
 srt<-readRDS("/srt.RDS")
-##seurat containing all epithelial cells
+##seurat containing all thymic epithelial cells
 srt2<-readRDS(file="/teconly.from.all.1.repca.reclust.int.rds")
 Idents(srt2)<-'cellType'
 srt_sub<- subset(srt2, idents="mTEC 1")
