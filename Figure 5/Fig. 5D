@@ -1,0 +1,46 @@
+library(tidyverse)
+library(Seurat)
+library (dplyr)
+library(tidyverse)
+library(Seurat)
+library(umap)
+library(viridis)
+library(tidyverse)
+library(Seurat)
+library (dplyr)
+library(tidyverse)
+library(Seurat)
+library(umap)
+library(viridis)
+library(ggtext)
+library(ggplot2)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+###df contains ratios of clusters over time
+df<- read.csv(file="/number of boutiques_new.csv")
+ord<-c("mTECII AIRELow", "mTECII AIRELow Cy","mTECII AIREhigh", "Post-AIRE mTEC III/IV", "Neuroendocrine-like", "Muscle-like")
+ord<-rev(ord)
+
+super_labels <- c(bquote(mTECII~AIRE^Low), bquote(mTECII~AIRE^Low~Cy),
+                  bquote(mTECII~AIRE^High),bquote('Post-AIRE mTECIII/IV'), bquote('Neuroendocrine-like'),bquote("Muscle-like"))
+
+
+plt_new <- df %>% 
+  mutate(Gestational.Age = factor(Gestational.Age, levels = 
+                                    rev(c("6,7 Weeks","16,17,18 Weeks","3 Months")))) %>%
+  mutate(CellType = factor(CellType, levels = 
+                             ord)) %>% 
+  ggplot(aes(x = CellType, y=Percentage, fill = Gestational.Age)) + 
+  geom_bar(stat = "identity", position = "fill", color= "black") +
+  geom_text(aes(label = ifelse(Percentage == 0, "",Percentage)),
+            position = position_fill(vjust = 0.5),color="white",size=3.8)+
+  scale_fill_manual(values=rev(c("darkred","darkgreen","orange"))) + 
+  scale_y_discrete(expand = c(0,0))+
+  scale_x_discrete(expand = c(0,0))+scale_x_discrete(labels =rev(super_labels))+
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,size=12,color='black'),axis.text.y = element_text(size=12,color='black'),
+        plot.margin = unit(c(2,1,1,1), "lines")) +
+  labs(x = "", y = "Percentage of Cluster Frequency across Time", fill = "")
+plt<-plt_new+coord_flip()+NoLegend()
