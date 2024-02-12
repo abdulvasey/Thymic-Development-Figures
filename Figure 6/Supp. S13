@@ -1,0 +1,82 @@
+library (tradeSeq)
+library(tidyverse)
+library(RColorBrewer)
+library(SingleCellExperiment)
+library(Seurat)
+library(DelayedMatrixStats)
+
+###Seurat of thymic epithelial cells from all stages
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode:age) %>% 
+  left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+  column_to_rownames("barcode")
+
+Idents(srt)<-'cellType'
+
+###adding tspace data to seurat object (ts_df dataframe is from Fig. 5A)
+tembeds<- ts_df[c("1","2")]
+tembeds <- tembeds %>% 
+  rename('1'="tspace_1",
+         '2'="tspace_2")
+tembeds<- as.matrix(tembeds)
+rownames (tembeds)<- colnames(srt)
+srt[["tspace"]] <- CreateDimReducObject(embeddings = tembeds, key = "tspace_", assay = DefaultAssay(srt))
+
+srt_sub <- subset(srt,idents=c("cTEC", "Cycling TEC","mcTEC","mTEC 1",'mTEC 2'))
+
+##converting to SCE to run slingshot
+sce <- as.SingleCellExperiment(srt_sub, assay = "RNA")
+
+##tradeseq modeling of variable genes
+srt_sub<-FindVariableFeatures(srt_sub)
+
+
+sce_thymus<-sce
+pseudotime <- slingPseudotime(sce_thymus, na = F)
+pseudotime[is.na(pseudotime)] <- 0
+
+cellWeights <- slingCurveWeights(sce_thymus)
+Counts <- counts(sce_thymus)[VariableFeatures(srt_sub),]
+
+sce1 <- fitGAM(counts = Counts, 
+              pseudotime = pseudotime,
+              cellWeights = cellWeights,
+              nknots = 6, verbose = FALSE)
+
+
+
+###plotting
+plotSmoothers(sce1, counts(sce), gene = 'FEZF2')+ scale_x_continuous(breaks = seq(0, 40, by = 2))
+
+plt<-plotSmoothers(sce1, counts(sce), gene = 'FEZF2')+ scale_x_continuous(breaks = seq(0, 40, by = 2))
+plt_data<-plt[["data"]]
+
+df <- plt_data[plt_data$pCol != 2, ]
+
+plt[["data"]]<-df
+#removing unwanted layers
+plt[["layers"]][[5]]<-NULL
+plt[["layers"]][[4]]<-NULL
+plt[["layers"]][[3]]<-NULL
+plt[["layers"]][[2]]<-NULL
+plt1<-plt+ggtitle('FEZF2')+
+  theme(plot.title = element_text(face = "italic"))
+
+plt<-plotSmoothers(sce1, counts(sce), gene = 'AIRE')+ scale_x_continuous(breaks = seq(0, 40, by = 2))
+plt_data<-plt[["data"]]
+
+df <- plt_data[plt_data$pCol != 2, ]
+
+plt[["data"]]<-df
+
+plt[["layers"]][[5]]<-NULL
+plt[["layers"]][[4]]<-NULL
+plt[["layers"]][[3]]<-NULL
+plt[["layers"]][[2]]<-NULL
+plt2<-plt+ggtitle('AIRE')+
+  theme(plot.title = element_text(face = "italic"))
