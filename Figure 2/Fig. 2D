@@ -1,75 +1,87 @@
-library(tidyverse)
+# Load required libraries
 library(Seurat)
-library(SingleCellExperiment)
-library(slingshot)
-library(tradeSeq)
-library(cowplot)
-library(ggrastr)
-library(DelayedMatrixStats)
-library (RColorBrewer)
-library(viridis)
-library(SCORPIUS)
-library(zoo)
-library(pheatmap)
-library(tradeSeq)
-library(reshape2)
+library(dplyr)
+library(readr)
+library(stringr)
+library(ggplot2)
 
+# Load Seurat object and metadata
+seurat_obj <- readRDS("all_red.epi.from.individual.overall.int.rds")
+meta_data <- read_csv("horizontal_meta.csv")
 
-######Seurat of all fetal epithelial cells
-srt <- readRDS("all_red.epi.from.individual.overall.int.rds")
+# Load gene network clusters, from Fig. 2C. List of character vectors containing names of regulons in each subnetwork.
+gene_modules <- readRDS('network clusters.RDS')
 
-meta <-  read_csv("horizontal_meta.csv")
-
-####gene clusters from Fig 2C
-k<-readRDS('network clusters.RDS')
-
-srt@meta.data <- srt@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType)) %>% 
-  mutate(tissue = case_when(
-    samptype == "TEC" ~ "T",
-    samptype == "EEC" ~ "E",
-    samptype == "BEC" ~ "B",
-    samptype == "LEC" ~ "L"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+# Merge metadata and assign group labels
+seurat_obj@meta.data <- seurat_obj@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta_data %>% select(barcode, cellType), by = "barcode") %>%
+  mutate(
+    tissue = case_when(
+      samptype == "TEC" ~ "T",
+      samptype == "EEC" ~ "E",
+      samptype == "BEC" ~ "B",
+      samptype == "LEC" ~ "L"
+    ),
+    group_label = str_glue("{cellType} {tissue}")
+  ) %>%
   column_to_rownames("barcode")
 
-Idents(srt)<-'group_label'
+# Set cell identities
+Idents(seurat_obj) <- "group_label"
 
+# Rename & reorder cluster identities
+seurat_obj <- RenameIdents(seurat_obj,
+                           `Bud Tip Progenitor L` = "BTP L",
+                           `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L",
+                           `Bud Tip Progenitor B` = "BTP B")
 
-#Renaming and ordering clusters
-srt <- RenameIdents(srt, `Bud Tip Progenitor L` = "BTP L")
-srt <- RenameIdents(srt, `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L")
-srt <- RenameIdents(srt, `Bud Tip Progenitor B` = "BTP B")
-tec<-c('mcTEC T','cTEC T', 'mTECI T',"mTECII T", 'mTECIII/IV T', 'TECneuro T', 'TECmyo T')
-lec<-c('BTP L', 'BTP Adjacent L', 'Multiciliated L', 'Secretory L', 'Epithelial Basal L', 'Neuroendocrine L')
-bec<-c('Epithelial Basal B','Club B', 'Goblet B', 'Submucosal Gland B', 'Secretory B','Multiciliated B','BTP B')
-eec<-c('Epithelial Basal E', 'Suprabasal E', 'Multiciliated E', 'Gastric Epithelial E')
-ord<-c(tec,bec,lec,eec)
-#FeaturePlot(srt,features="k101",reduction="umap")
-srt@active.ident<-factor(srt@active.ident,levels = ord)
+# Define cluster ordering
+tec <- c('mcTEC T','cTEC T','mTECI T','mTECII T','mTECIII/IV T','TECneuro T','TECmyo T')
+lec <- c('BTP L','BTP Adjacent L','Multiciliated L','Secretory L','Epithelial Basal L','Neuroendocrine L')
+bec <- c('Epithelial Basal B','Club B','Goblet B','Submucosal Gland B','Secretory B','Multiciliated B','BTP B')
+eec <- c('Epithelial Basal E','Suprabasal E','Multiciliated E','Gastric Epithelial E')
+cluster_order <- c(tec, bec, lec, eec)
 
-tec<-c('mcTEC T','cTEC T', 'mTECI T',"mTECII T", 'mTECIII/IV T', 'TECneuro T', 'TECmyo T')
-lec<-c('BTP L', 'BTP Adj. L', 'MC L', 'Sec. L', 'Epi. Basal L', 'NE L')
-bec<-c('Epi. Basal B','Club B', 'Goblet B', 'Submuc. B', 'Sec. B','MC B','BTP B')
-eec<-c('Epi. Basal E', 'Suprabasal E', 'MC E', 'Gastric E')
-ord<-c(tec,bec,lec,eec)
-new.cluster.ids <- ord
-names(new.cluster.ids) <- levels(srt)
-srt <- RenameIdents(srt, new.cluster.ids)
-srt@active.ident<-factor(srt@active.ident,levels = ord)
+seurat_obj@active.ident <- factor(seurat_obj@active.ident, levels = cluster_order)
 
-##Computing module score for genes comprising each subnetwork
+# (Optional) Shorter labels for cleaner plots
+tec_short <- c('mcTEC T','cTEC T','mTECI T','mTECII T','mTECIII/IV T','TECneuro T','TECmyo T')
+lec_short <- c('BTP L','BTP Adj. L','MC L','Sec. L','Epi. Basal L','NE L')
+bec_short <- c('Epi. Basal B','Club B','Goblet B','Submuc. B','Sec. B','MC B','BTP B')
+eec_short <- c('Epi. Basal E','Suprabasal E','MC E','Gastric E')
+cluster_order_short <- c(tec_short, bec_short, lec_short, eec_short)
+
+names(cluster_order_short) <- levels(seurat_obj)
+seurat_obj <- RenameIdents(seurat_obj, cluster_order_short)
+seurat_obj@active.ident <- factor(seurat_obj@active.ident, levels = cluster_order_short)
+
+# Add module scores for each gene network
 for (i in 1:7) {
-  motif_name <- paste0('k', i)
-  srt <- AddModuleScore(srt, name = motif_name, features = list(k[[as.character(i)]]))
+  module_name <- paste0("k", i)
+  seurat_obj <- AddModuleScore(
+    object = seurat_obj,
+    features = list(gene_modules[[as.character(i)]]),
+    name = module_name
+  )
 }
 
-srt@active.ident<-factor(srt@active.ident,levels = rev(ord))
-plt<-DotPlot(srt, features =motif_names ,cols = c('white','darkred')) + theme_minimal() +
-  theme(axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_text(angle = 0, size = 12,color = 'black'),axis.text.y = element_text(size = 12,color = 'black'))+scale_x_discrete(label=c('A','B','C','D','E','F','G'))
-plt
+# Prepare DotPlot
+module_score_names <- paste0("k", 1:7, "_1")
 
-##color bar added manually
+# Plot
+seurat_obj@active.ident <- factor(seurat_obj@active.ident, levels = rev(cluster_order_short))
+
+dotplot <- DotPlot(seurat_obj, features = module_score_names, cols = c("white", "darkred")) +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(angle = 0, size = 12, color = 'black'),
+    axis.text.y = element_text(size = 12, color = 'black')
+  ) +
+  scale_x_discrete(labels = c("A", "B", "C", "D", "E", "F", "G"))
+
+# Display
+dotplot
