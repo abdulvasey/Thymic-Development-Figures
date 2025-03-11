@@ -1,70 +1,103 @@
+# Load Required Libraries
 library(Seurat)
 library(tidyverse)
 library(cowplot)
 
-srt<- readRDS("allsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
-meta <-  read_csv("horizontal_meta.csv")
+# Load Seurat Object and Metadata
+srt <- readRDS("allsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
+meta <- read_csv("horizontal_meta.csv")
 
-
-
-srt@meta.data <- srt@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType)) %>% 
-  mutate(tissue = case_when(
-    samptype == "TEC" ~ "T",
-    samptype == "EEC" ~ "E",
-    samptype == "BEC" ~ "B",
-    samptype == "LEC" ~ "L"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+# Merge Metadata and Annotate Tissue & Group Labels
+srt@meta.data <- srt@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType)) %>%
+  mutate(
+    tissue = case_when(
+      samptype == "TEC" ~ "T",
+      samptype == "EEC" ~ "E",
+      samptype == "BEC" ~ "B",
+      samptype == "LEC" ~ "L"
+    ),
+    group_label = str_glue("{cellType} {tissue}")
+  ) %>%
   column_to_rownames("barcode")
 
+# Set Group Label as Active Identity
 srt <- SetIdent(srt, value = "group_label")
 
+# Rename Specific Cluster Labels for Readability
+srt <- RenameIdents(srt, 
+  `Epithelial Basal B` = "Basal B",
+  `Epithelial Basal E` = "Basal E",
+  `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L",
+  `Bud Tip Progenitor L` = "BTP L",
+  `Gastric Epithelial E` = "Gastric E",
+  `Submucosal Gland B` = "Submuc. Gland B"
+)
 
-####renaming clusters
-srt <- RenameIdents(srt, `Epithelial Basal B` = "Basal B")
-srt <- RenameIdents(srt, `Epithelial Basal E` = "Basal E")
-srt <- RenameIdents(srt, `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L")
-srt <- RenameIdents(srt, `Bud Tip Progenitor L` = "BTP L")
-srt <- RenameIdents(srt, `Gastric Epithelial E` = "Gastric E")
-srt <- RenameIdents(srt, `Submucosal Gland B` = "Submuc. Gland B")
+# Subset for Epithelial & TEC Cell Types
+target_clusters <- c("mcTEC T", "cTEC T", "mTECI T", "mTECII T", "mTECIII/IV T", "TECneuro T", "TECmyo T",
+                     "Basal B", "Club B", "Goblet B", "Submuc. Gland B", "Secretory B", 
+                     "Multiciliated L", "BTP Adjacent L", "BTP L", "Neuroendocrine L", 
+                     "Basal E", "Suprabasal E", "Gastric E")
+epithelial_subset <- subset(srt, idents = target_clusters)
+epithelial_subset@active.ident <- factor(epithelial_subset@active.ident, levels = target_clusters)
 
+# Shorten Cluster Names for Plotting
+short_names <- c("mcTEC T", "cTEC T", "mTECI T", "mTECII T", "mTECIII/IV T", "TECneuro T", "TECmyo T", 
+                 "Epi. Basal B", "Club B", "Goblet B", "Submuc.B", "Sec. B", 
+                 "MC L", "BTP Adj. L", "BTP L", "NE L", 
+                 "Epi. Basal E", "Suprabasal E", "Gastric E")
+names(short_names) <- levels(epithelial_subset)
+epithelial_subset <- RenameIdents(epithelial_subset, short_names)
+epithelial_subset@active.ident <- factor(epithelial_subset@active.ident, levels = rev(short_names))
 
+# DotPlot: Epithelial/TEC Signature Genes
+signature_genes <- c("FOXN1", "PSMB11", "DLK2", "CCL19", "AIRE", "KRT1", 
+                     "POU2F3", "NEUROD1", "MYOD1", "IL33", "SCGB1A1", "MUC5B", 
+                     "LTF", "SCGB3A2", "PIFO", "AGER", "SFTPC", "CHGA", 
+                     "KRT15", "KRT13", "TFF1")
+dp1 <- DotPlot(epithelial_subset, features = signature_genes, cols = c('white', 'darkred'), col.min = -0.5, col.max = 2.4) + 
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5),
+    axis.text.y = element_text(size = 12)
+  )
+dp1
 
-idents = c("mcTEC T",'cTEC T',"mTECI T","mTECII T","mTECIII/IV T","TECneuro T","TECmyo T","Basal B","Club B","Goblet B","Submuc. Gland B","Secretory B","Multiciliated L","BTP Adjacent L","BTP L",'Neuroendocrine L',"Basal E","Suprabasal E","Gastric E")
-sub<-subset(srt, idents = idents)
-sub@active.ident<- factor(sub@active.ident,levels=idents)
-
-####shortening cluster names
-new.cluster.ids <- c("mcTEC T",'cTEC T',"mTECI T","mTECII T","mTECIII/IV T","TECneuro T","TECmyo T","Epi. Basal B","Club B","Goblet B","Submuc.B","Sec. B","MC L","BTP Adj. L","BTP L",'NE L',"Epi. Basal E","Suprabasal E","Gastric E")
-names(new.cluster.ids) <- levels(sub)
-sub <- RenameIdents(sub, new.cluster.ids)
-
-####Upper panel dotplot 
-sub@active.ident<- factor(sub@active.ident,levels=rev(new.cluster.ids))
-feature = c("FOXN1","PSMB11","DLK2","CCL19","AIRE","KRT1","POU2F3","NEUROD1","MYOD1",'IL33','SCGB1A1','MUC5B','LTF','SCGB3A2','PIFO','AGER','SFTPC','CHGA','KRT15','KRT13','TFF1')
-
-
-dp<-DotPlot(sub, features = feature,cols = c('white','darkred'),col.min=-0.5,col.max=2.4) + theme_minimal() +
-  theme(axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_text(angle = 90, size = 12, hjust=1,vjust=0.5),axis.text.y = element_text(size = 12))
-dp
-
-####Bottom panel dotplot
+# Reassign Identity to General Cell Type
 srt <- SetIdent(srt, value = "cellType")
-idents=c("DN Thymocyte","SP/DP Thymocyte","T Cell","B Cell","Macrophage","Dendritic",'Fibroblast',"Fibroblast 1",'Fibroblast 1 Cycling',"Fibroblast 2","VSMC","Smooth Muscle","Cartilage","Vascular Endothelial","Lymphatic Endothelial","Neuronal")
 
-sub2<-subset(srt, idents = idents)
-sub2@active.ident<- factor(sub2@active.ident,levels=idents)
+# Subset for Stromal/Immune/Other Cell Types
+celltype_clusters <- c("DN Thymocyte", "SP/DP Thymocyte", "T Cell", "B Cell", 
+                       "Macrophage", "Dendritic", "Fibroblast", "Fibroblast 1", 
+                       "Fibroblast 1 Cycling", "Fibroblast 2", "VSMC", 
+                       "Smooth Muscle", "Cartilage", "Vascular Endothelial", 
+                       "Lymphatic Endothelial", "Neuronal")
+celltype_subset <- subset(srt, idents = celltype_clusters)
+celltype_subset@active.ident <- factor(celltype_subset@active.ident, levels = celltype_clusters)
 
-######shorten cluster names
-new.cluster.ids <- c("DN","SP/DP","T Cell","B Cell","Mac.","Dend.",'Fib',"Fib. 1",'Fib. 1 Cyc.',"Fib. 2","VSMC","SM","Cart.","V Endo.","L Endo.","Neu.")
-names(new.cluster.ids) <- levels(sub2)
-sub2 <- RenameIdents(sub2, new.cluster.ids)
-sub2@active.ident<- factor(sub2@active.ident,levels=rev(new.cluster.ids))
+# Shorten Names for Plotting
+celltype_short <- c("DN", "SP/DP", "T Cell", "B Cell", "Mac.", "Dend.", "Fib", 
+                    "Fib. 1", "Fib. 1 Cyc.", "Fib. 2", "VSMC", "SM", "Cart.", 
+                    "V Endo.", "L Endo.", "Neu.")
+names(celltype_short) <- levels(celltype_subset)
+celltype_subset <- RenameIdents(celltype_subset, celltype_short)
+celltype_subset@active.ident <- factor(celltype_subset@active.ident, levels = rev(celltype_short))
 
-genes=c("TRDC","PTPRC","CD4","CD8A","CD3D","MS4A1",'S100A9','LAMP3',"FGFR1",'ALDH1A2','MKI67','FBN1','PDGFRB','ACTA2','DES','CNMD',"AQP1",'PECAM1','PROX1','NRXN1')
-dp<-DotPlot(sub2, features = genes,cols = c('white','darkred'),col.min=-0.5,col.max=2.4) + theme_minimal() +
-  theme(axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_text(angle = 90, size = 12, hjust=1,vjust=0.5),axis.text.y = element_text(size = 12))
-dp
+# DotPlot: Stromal/Immune/Other Signature Genes
+other_genes <- c("TRDC", "PTPRC", "CD4", "CD8A", "CD3D", "MS4A1", "S100A9", "LAMP3", 
+                 "FGFR1", "ALDH1A2", "MKI67", "FBN1", "PDGFRB", "ACTA2", "DES", 
+                 "CNMD", "AQP1", "PECAM1", "PROX1", "NRXN1")
+dp2 <- DotPlot(celltype_subset, features = other_genes, cols = c('white', 'darkred'), col.min = -0.5, col.max = 2.4) + 
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5),
+    axis.text.y = element_text(size = 12)
+  )
+dp2
