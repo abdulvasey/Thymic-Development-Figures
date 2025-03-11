@@ -1,79 +1,88 @@
+# Load Required Libraries
 library(tidyverse)
 library(ggrastr)
 library(Seurat)
 library(dplyr)
+library(future)
+library(patchwork)
 
-#######all fetal cells
+# Load Seurat Object and Metadata
 srt <- readRDS("allsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
 meta <- read_csv("horizontal_meta.csv")
 
-
-srt@meta.data <- srt@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% select(barcode, cellType,cellGroup)) %>% 
-  mutate(tissue = case_when(
-    samptype == "TEC" ~ "Thymus",
-    samptype == "EEC" ~ "Esophagus",
-    samptype == "BEC" ~ "Bronchus",
-    samptype == "LEC" ~ "Lung"
-  )) %>% 
-  mutate(group_label = str_glue("{tissue}_{cellType}")) %>% 
+# Merge Metadata and Annotate Tissue & Group Labels
+srt@meta.data <- srt@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType, cellGroup)) %>%
+  mutate(
+    tissue = case_when(
+      samptype == "TEC" ~ "Thymus",
+      samptype == "EEC" ~ "Esophagus",
+      samptype == "BEC" ~ "Bronchus",
+      samptype == "LEC" ~ "Lung"
+    ),
+    group_label = str_glue("{tissue}_{cellType}")
+  ) %>%
   column_to_rownames("barcode")
 
+# Set Identity and Filter Doublets
 srt <- SetIdent(srt, value = srt@meta.data$cellGroup)
 DefaultAssay(srt) <- "RNA"
+srt <- subset(srt, idents = "Doublets", invert = TRUE)
 
-srt<-subset(srt,idents = "Doublets",invert=TRUE)
-
-library(future)
+# Parallel Processing Setup
 plan("multisession", workers = 6)
-allmarks<-FindAllMarkers(srt,min.diff.pct = 0.25)
 
+# Identify Marker Genes for Each CellGroup
+allmarks <- FindAllMarkers(srt, min.diff.pct = 0.25)
 
+# Define Cluster Order
+cluster_order <- c("Epithelial", "Endothelial", "Mesenchymal", "Immune", "Neuronal", "Myoepithelial")
+srt@active.ident <- factor(srt@active.ident, levels = cluster_order)
 
-cluster_order <- c("Epithelial", "Endothelial","Mesenchymal","Immune","Neuronal","Myoepithelial")
+# Load List of Transcription Factors (Aerts Lab)
+tf_file <- "allTFs_hg38.txt"
+tf_list <- scan(tf_file, what = character(), sep = "\n")
 
-srt@active.ident<- factor(srt@active.ident,levels=cluster_order)
-
-####list of transcription factors (Aerts Lab)
-file_path="allTFs_hg38.txt"
-elements_vector <- scan(file_path, what = character(), sep = "\n")
-
-
-#####dotplot loop setup
+# Initialize Containers
 genes_list <- list()
-df_list<- list()
-plt_list<- list()
+df_list <- list()
+plt_list <- list()
 
-DefaultAssay(srt) <- "RNA"
-for (x in cluster_order) {
-  df <- subset(allmarks,cluster==x & p_val_adj<10^-100 & avg_log2FC>0) %>%
-    arrange(p_val_adj,-avg_log2FC)
-  all_genes<-df$gene[1:50]
-  all_genes<-na.omit(all_genes)
-  genes_list[[paste("set_", x)]] <- all_genes
-  df_list[[paste("df_", x)]] <- df
-  ########setting up vector to bolden TF names
-  result_vector <- character(length(all_genes))
-  for (i in seq_along(all_genes)) {
-    if (all_genes[i] %in% elements_vector) {
-      result_vector[i] <- 'bold.italic'
-    } else {
-      result_vector[i] <- 'italic'
-    }
-  }
-  ###### ggplot construction
-  plt<-DotPlot(srt, features = rev(all_genes),assay = "RNA",cols = c('white','darkred')) + theme_minimal() + theme(axis.title.x=element_blank(),axis.title.y=element_blank())+
-    theme(axis.text.x = element_text(angle = 90, size = 10, hjust=1,vjust=0.5,color = 'black'),axis.text.y = element_text(size = 10, face = "italic",color = 'black'))+ggtitle(x)+coord_flip()+
-    theme(axis.text.y = element_text(face = rev(result_vector)))
-  ####plot formatting
-  plt[["guides"]][["colour"]][["title"]]<-'Avg. Exp.'
-  plt[["guides"]][["size"]][["title"]]<-'% Exp.'
-  plt[["guides"]][["size"]][["order"]]<-2
-  plt[["guides"]][["colour"]][["order"]]<-1
-  plt_list[[paste("plt_", x)]] <- plt
+# Generate DotPlots for Each Cluster with TFs Highlighted
+for (cluster in cluster_order) {
+  df <- subset(allmarks, cluster == !!cluster & p_val_adj < 1e-100 & avg_log2FC > 0) %>%
+    arrange(p_val_adj, desc(avg_log2FC))
+  top_genes <- na.omit(df$gene[1:50])
+  genes_list[[paste0("set_", cluster)]] <- top_genes
+  df_list[[paste0("df_", cluster)]] <- df
+
+  # Format gene names: italicize all, bold.italic for transcription factors
+  font_styles <- ifelse(top_genes %in% tf_list, "bold.italic", "italic")
+
+  # Create DotPlot
+  plt <- DotPlot(srt, features = rev(top_genes), assay = "RNA", cols = c("white", "darkred")) +
+    theme_minimal() +
+    theme(
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.text.x = element_text(angle = 90, size = 10, hjust = 1, vjust = 0.5, color = "black"),
+      axis.text.y = element_text(size = 10, color = "black", face = rev(font_styles))
+    ) +
+    ggtitle(cluster) +
+    coord_flip()
+
+  # Customize plot legend
+  plt[["guides"]][["colour"]][["title"]] <- 'Avg. Exp.'
+  plt[["guides"]][["size"]][["title"]] <- '% Exp.'
+  plt[["guides"]][["size"]][["order"]] <- 2
+  plt[["guides"]][["colour"]][["order"]] <- 1
+
+  # Store plot
+  plt_list[[paste0("plt_", cluster)]] <- plt
 }
 
-patchwork::wrap_plots(plt_list, 
-                      nrow = 2)
+# Combine All DotPlots into One Panel
+patchwork::wrap_plots(plt_list, nrow = 2)
+
