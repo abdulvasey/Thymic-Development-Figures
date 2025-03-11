@@ -1,56 +1,48 @@
+# Load Required Libraries
 library(tidyverse)
 library(Seurat)
-library(SingleCellExperiment)
-library(slingshot)
-library(tradeSeq)
-library(cowplot)
-library(ggrastr)
-library(DelayedMatrixStats)
-library (RColorBrewer)
-library(viridis)
-library(SCORPIUS)
-library(zoo)
-library(pheatmap)
-library(tradeSeq)
-library(reshape2)
-library(ggrepel)
 
+# Load Seurat Object and Metadata
 srt <- readRDS("allsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
+meta <- read_csv("horizontal_meta.csv")
 
-
-meta <-  read_csv("horizontal_meta.csv")
-
-srt@meta.data <- srt@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType,cellGroup)) %>% 
-  mutate(tissue = case_when(
-    samptype == "TEC" ~ "Thymus",
-    samptype == "EEC" ~ "Esophagus",
-    samptype == "BEC" ~ "Bronchus",
-    samptype == "LEC" ~ "Lung"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+# Merge Metadata with Seurat Object and Annotate Tissue & Group Labels
+srt@meta.data <- srt@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType, cellGroup)) %>%
+  mutate(
+    tissue = case_when(
+      samptype == "TEC" ~ "Thymus",
+      samptype == "EEC" ~ "Esophagus",
+      samptype == "BEC" ~ "Bronchus",
+      samptype == "LEC" ~ "Lung"
+    ),
+    group_label = str_glue("{cellType} {tissue}")
+  ) %>%
   column_to_rownames("barcode")
 
-Idents(srt)<-'cellType'
-DimPlot(srt,label = TRUE)
-srt<-subset(srt,idents=c('Doublets'),invert=TRUE)
+# Initial DimPlot by Cell Type
+Idents(srt) <- 'cellType'
+DimPlot(srt, label = TRUE)
 
+# Remove Doublets from Dataset
+srt <- subset(srt, idents = c('Doublets'), invert = TRUE)
 
-#extracting color data from meta file
-m2<-meta[c('cellGroup_color','cellGroup_order','cellGroup')]
-m2<-subset(m2, m2$cellGroup!='Doublets')
-m2 <- m2[order(m2$cellGroup_order),]
+# Extract Color and Order Information from Metadata for CellGroup
+m2 <- meta[c('cellGroup_color', 'cellGroup_order', 'cellGroup')]
+m2 <- subset(m2, m2$cellGroup != 'Doublets')
+m2 <- m2[order(m2$cellGroup_order), ]
+col <- unique(m2$cellGroup_color)
+ord <- unique(m2$cellGroup)
 
-col<-unique(m2$cellGroup_color)
+# Reassign Identity and Order for CellGroup Plot
+Idents(srt) <- 'cellGroup'
+srt@active.ident <- factor(srt@active.ident, levels = ord)
 
-ord<-unique(m2$cellGroup)
+# Final DimPlot Colored by CellGroup
+DimPlot(srt, cols = col, pt.size = 0.1, shuffle = TRUE) + NoAxes() + NoLegend()
 
-Idents(srt)<-'cellGroup'
-srt@active.ident<-factor(srt@active.ident,levels = ord)
-
-DimPlot(srt,cols = col,pt.size = 0.1,shuffle = TRUE) + NoAxes() + NoLegend()
 
 
 
