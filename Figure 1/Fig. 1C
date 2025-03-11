@@ -1,237 +1,267 @@
-library(tidyverse)
-library(Seurat)
-library(SingleCellExperiment)
-library(slingshot)
-library(tradeSeq)
-library(cowplot)
-library(ggrastr)
-library(DelayedMatrixStats)
-library (RColorBrewer)
-library(viridis)
-library(SCORPIUS)
-library(zoo)
-library(pheatmap)
-library(tradeSeq)
-library(reshape2)
-library(ggrepel)
+# Load libraries used across project
+library(tidyverse)            # Data manipulation and visualization
+library(Seurat)               # Single-cell analysis and visualization
+library(SingleCellExperiment) # Data structure for single-cell data
+library(slingshot)            # Trajectory inference
+library(tradeSeq)             # Differential expression along trajectories
+library(cowplot)              # Combining plots
+library(ggrastr)              # Fast rasterized layers for ggplot2
+library(DelayedMatrixStats)   # Statistics for large matrices
+library(RColorBrewer)         # Color palettes
+library(viridis)              # Colorblind-friendly palettes
+library(SCORPIUS)             # Additional trajectory inference
+library(zoo)                  # Time series utilities
+library(pheatmap)             # Heatmap plotting
+library(reshape2)             # Data reshaping
+library(ggrepel)              # Non-overlapping text labels in plots
 
-
-#Fetal Thymus Seurat
+# ---------------------------
+# Fetal Thymus Processing
+# ---------------------------
 srt <- readRDS("tecsamps-horiz-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
+meta <- read_csv("horizontal_meta.csv")
 
-
-meta <-  read_csv("horizontal_meta.csv")
-
-srt@meta.data <- srt@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType,cellGroup)) %>% 
+# Merge metadata into the Seurat object and create new columns for tissue and group_label
+srt@meta.data <- srt@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType, cellGroup)) %>%
   mutate(tissue = case_when(
     samptype == "TEC" ~ "Thymus",
     samptype == "EEC" ~ "Esophagus",
     samptype == "BEC" ~ "Bronchus",
     samptype == "LEC" ~ "Lung"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+  )) %>%
+  mutate(group_label = str_glue("{cellType} {tissue}")) %>%
   column_to_rownames("barcode")
 
+# Set cell identity and view initial UMAP plot
+Idents(srt) <- 'cellType'
+DimPlot(srt, label = TRUE, label.box = TRUE)
 
+# Remove doublets from the data
+srt <- subset(srt, idents = c('Doublets'), invert = TRUE)
 
+# Run UMAP using integrated data
+DefaultAssay(srt) <- 'integrated'
+srt <- RunUMAP(srt, dims = 1:50, n.neighbors = 200, min.dist = 1.5, seed.use = 135)
+DimPlot(srt, label = TRUE)
 
-Idents(srt)<-'cellType'
-DimPlot(srt,label = TRUE,label.box = TRUE)
-#removal of doublets
-srt<-subset(srt,idents=c('Doublets'),invert=TRUE)
+# ---------------------------
+# Rename clusters and assign colors
+# ---------------------------
+ord <- c('mcTEC', 'cTEC', 'mTECI', 'mTECII', 'mTECIII/IV', 'TECneuro', 'TECmyo', 
+         'DN Thymocyte', 'SP/DP Thymocyte', 'Macrophage', 'Dendritic', 
+         'Fibroblast 1', 'Fibroblast 1 Cycling', 'Fibroblast 2', 'VSMC', 
+         'Vascular Endothelial', 'Lymphatic Endothelial', 'Neuronal')
+srt@active.ident <- factor(srt@active.ident, levels = ord)
 
-
-###UMAP settings
-DefaultAssay(srt)<-'integrated'
-srt<-RunUMAP(srt,dims = 1:50, n.neighbors = 200,min.dist = 1.5,seed.use = 135)
-DimPlot(srt,label = TRUE)
-
-
-
-#shortening cluster names
-ord <- c('mcTEC', 'cTEC', 'mTECI', 'mTECII', 'mTECIII/IV', 'TECneuro', 'TECmyo', 'DN Thymocyte', 'SP/DP Thymocyte', 'Macrophage', 'Dendritic', 'Fibroblast 1', 'Fibroblast 1 Cycling', 'Fibroblast 2', 'VSMC', 'Vascular Endothelial', 'Lymphatic Endothelial', 'Neuronal')
-srt@active.ident<-factor(srt@active.ident,levels = ord)
-new.cluster.ids <- c('mcTEC', 'cTEC', 'mTECI', 'mTECII', 'mTECIII/IV', 'TECneuro', 'TECmyo', 'DN', 'SP/DP', 'Mac.', 'Dend.', 'Fib. 1', 'Fib. 1 Cyc.', 'Fib. 2', 'VSMC', 'V Endo.', 'L Endo.', 'Neu.')
+# Shorten cluster names for clarity
+new.cluster.ids <- c('mcTEC', 'cTEC', 'mTECI', 'mTECII', 'mTECIII/IV', 
+                     'TECneuro', 'TECmyo', 'DN', 'SP/DP', 'Mac.', 'Dend.', 
+                     'Fib. 1', 'Fib. 1 Cyc.', 'Fib. 2', 'VSMC', 'V Endo.', 
+                     'L Endo.', 'Neu.')
 names(new.cluster.ids) <- levels(srt)
 srt <- RenameIdents(srt, new.cluster.ids)
 
-##cluster colors
-cols<-c('darkred',"#E67E22", '#F1ADA1', '#DF5D5D', '#E11919', '#7F4040', '#B35A00', '#C4E1FC', '#59AEFE', '#3E73ED', '#6986C8', '#D6C1F0', '#8A55C9',"#6A5ACD", '#B25C00','#99DF93', "#008000", '#B8B8B8')
+# Define colors to use for each cluster
+cols <- c('darkred', "#E67E22", '#F1ADA1', '#DF5D5D', '#E11919', 
+          '#7F4040', '#B35A00', '#C4E1FC', '#59AEFE', '#3E73ED', 
+          '#6986C8', '#D6C1F0', '#8A55C9', "#6A5ACD", '#B25C00', 
+          '#99DF93', "#008000", '#B8B8B8')
 
+# ---------------------------
+# Create UMAP plot with cluster labels
+# ---------------------------
+p <- DimPlot(srt, pt.size = 0.8, shuffle = TRUE, cols = cols) + NoLegend() + NoAxes()
 
+# Extract UMAP coordinate data and calculate median position for each cluster label
+m <- DimPlot(srt, reduction = 'umap', combine = FALSE)
+df_median <- m[[1]][["data"]] %>% 
+  group_by_at(vars(ident)) %>% 
+  summarise_at(vars(contains("UMAP")), median, na.rm = TRUE)
 
-######plot construction
-p<-DimPlot(srt,pt.size = 0.8,shuffle = TRUE,cols = cols)+NoLegend()+NoAxes()
-m<-DimPlot(srt,reduction='umap',combine=FALSE)
-z<-m[[1]][["data"]]
-df_median <- z %>% 
-  group_by_at(vars(c(ident))) %>% 
-  summarise_at(vars(contains("UMAP")), ~ median(., na.rm = T))
-
-q<-df_median$ident=='TECmyo'
-q
-u<-c('TECmyo','TECneuro')
-plt<-p[[1]] 
+# Adjust label positions and add labels with geom_text_repel
 set.seed(100)
-
-
-##manually moving TECmyo and TECneuro labels
-plt<-plt + NoLegend()+
-  geom_text_repel(data=df_median,size=7,min.segment.length = 0,force=10,force_pull = 5,nudge_x = ifelse(grepl('TECmyo|mTECIII/IV',df_median$ident), -2,0.2),nudge_y = ifelse(grepl('TECneuro',df_median$ident), -0.5,0),aes(UMAP_1,UMAP_2,label=ident,bg.color = "white", bg.r = 0.2,size=20),color="black", show.legend = F)+ theme(legend.text = element_text(size=20))
-
+plt <- p[[1]] +
+  geom_text_repel(data = df_median,
+                  size = 7, min.segment.length = 0, force = 10, force_pull = 5,
+                  nudge_x = ifelse(grepl('TECmyo|mTECIII/IV', df_median$ident), -2, 0.2),
+                  nudge_y = ifelse(grepl('TECneuro', df_median$ident), -0.5, 0),
+                  aes(UMAP_1, UMAP_2, label = ident, bg.color = "white", bg.r = 0.2, size = 20),
+                  color = "black", show.legend = FALSE) +
+  theme(legend.text = element_text(size = 20))
 plt
 
-
-########Plots below follow similar structure of code to above
-
-
-#######Fetal Bronchus Seurat
+# ---------------------------
+# Fetal Bronchus Processing
+# ---------------------------
 srt1 <- readRDS("becsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
+meta <- read_csv("horizontal_meta.csv")
 
-
-meta <-  read_csv("horizontal_meta.csv")
-
-srt1@meta.data <- srt1@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType,cellGroup)) %>% 
+# Merge metadata and create tissue labels
+srt1@meta.data <- srt1@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType, cellGroup)) %>%
   mutate(tissue = case_when(
-    samptype == "bec" ~ "Thymus",
+    samptype == "bec" ~ "Thymus",  # Check sample type
     samptype == "EEC" ~ "Esophagus",
     samptype == "BEC" ~ "Bronchus",
     samptype == "LEC" ~ "Lung"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+  )) %>%
+  mutate(group_label = str_glue("{cellType} {tissue}")) %>%
   column_to_rownames("barcode")
 
-Idents(srt1)<-'cellType'
-DimPlot(srt1,label = TRUE,label.box = TRUE)
-srt1<-subset(srt1,idents=c('Doublets'),invert=TRUE)
+# Visualize and clean the data by removing doublets
+Idents(srt1) <- 'cellType'
+DimPlot(srt1, label = TRUE, label.box = TRUE)
+srt1 <- subset(srt1, idents = c('Doublets'), invert = TRUE)
 
-DefaultAssay(srt1)<-'integrated'
-srt1<-RunUMAP(srt1,dims = 1:50, n.neighbors = 200,min.dist = 1.5,seed.use = 135)
-DimPlot(srt1,label = TRUE)
+# Run UMAP and switch to RNA assay if needed for downstream analysis
+DefaultAssay(srt1) <- 'integrated'
+srt1 <- RunUMAP(srt1, dims = 1:50, n.neighbors = 200, min.dist = 1.5, seed.use = 135)
+DimPlot(srt1, label = TRUE)
+DefaultAssay(srt1) <- 'RNA'
 
-DefaultAssay(srt1)<-'RNA'
-
-Idents(srt1)<-'cellType'
-ord <- c('Epithelial Basal', 'Club', 'Goblet', 'Submucosal Gland', 'Secretory', 'Multiciliated', 'Bud Tip Progenitor', 'Myoepithelial', 'T Cell', 'B Cell', 'Macrophage', 'Fibroblast', 'VSMC', 'Smooth Muscle', 'Cartilage', 'Vascular Endothelial', 'Neuronal')
-srt1@active.ident<-factor(srt1@active.ident,levels = ord)
-new.cluster.ids <- c('Epi. Basal', 'Club', 'Goblet', 'Submuc.', 'Sec.', 'MC', 'BTP', 'Myoepi.', 'T Cell', 'B Cell', 'Mac.', 'Fib.', 'VSMC', 'SM', 'Cart.', 'V Endo.', 'Neu.')
+# Rename clusters with shorter names
+ord <- c('Epithelial Basal', 'Club', 'Goblet', 'Submucosal Gland', 'Secretory', 
+         'Multiciliated', 'Bud Tip Progenitor', 'Myoepithelial', 'T Cell', 'B Cell', 
+         'Macrophage', 'Fibroblast', 'VSMC', 'Smooth Muscle', 'Cartilage', 
+         'Vascular Endothelial', 'Neuronal')
+srt1@active.ident <- factor(srt1@active.ident, levels = ord)
+new.cluster.ids <- c('Epi. Basal', 'Club', 'Goblet', 'Submuc.', 'Sec.', 'MC', 
+                     'BTP', 'Myoepi.', 'T Cell', 'B Cell', 'Mac.', 'Fib.', 'VSMC', 
+                     'SM', 'Cart.', 'V Endo.', 'Neu.')
 names(new.cluster.ids) <- levels(srt1)
 srt1 <- RenameIdents(srt1, new.cluster.ids)
 
-cols<-c('darkred',"#E67E22", '#F1ADA1', '#DF5D5D', '#E11919', '#7F4040', '#B35A00', '#E7CDAE', '#C4E1FC', '#59AEFE', '#3E73ED', '#AE88DB', '#A26A27', '#D2B48C', '#B5A28C', '#99DF93', '#B8B8B8')
+# Set cluster colors and plot UMAP with labels
+cols <- c('darkred', "#E67E22", '#F1ADA1', '#DF5D5D', '#E11919', '#7F4040', 
+          '#B35A00', '#E7CDAE', '#C4E1FC', '#59AEFE', '#3E73ED', '#AE88DB', 
+          '#A26A27', '#D2B48C', '#B5A28C', '#99DF93', '#B8B8B8')
+p <- DimPlot(srt1, pt.size = 0.8, cols = cols) + NoLegend() + NoAxes()
+m <- DimPlot(srt1, reduction = 'umap', combine = FALSE)
+df_median <- m[[1]][["data"]] %>% 
+  group_by_at(vars(ident)) %>% 
+  summarise_at(vars(contains("UMAP")), median, na.rm = TRUE)
+plt <- p[[1]] +
+  geom_text_repel(data = df_median,
+                  size = 7, min.segment.length = 0, force = 10, force_pull = 8,
+                  aes(UMAP_1, UMAP_2, label = ident, bg.color = "white", bg.r = 0.2, size = 20),
+                  color = "black", show.legend = FALSE) +
+  theme(legend.text = element_text(size = 20))
+plt
 
-p<-DimPlot(srt1,pt.size = 0.8,cols = cols)+NoLegend()+NoAxes()
-m<-DimPlot(srt1,reduction='umap',combine=FALSE)
-z<-m[[1]][["data"]]
-df_median <- z %>% 
-  group_by_at(vars(c(ident))) %>% 
-  summarise_at(vars(contains("UMAP")), ~ median(., na.rm = T))
-
-plt<-p[[1]] 
-plt<-plt + NoAxes()+ NoLegend()+
-  geom_text_repel(data=df_median,size=7,min.segment.length = 0,force=10,force_pull = 8,aes(UMAP_1,UMAP_2,label=ident,bg.color = "white", bg.r = 0.2,size=20),color="black", show.legend = F)+ theme(legend.text = element_text(size=20))
-
-
-#######Fetal Lung Seurat
+# ---------------------------
+# Fetal Lung Processing
+# ---------------------------
 srt2 <- readRDS("lecsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
+meta <- read_csv("horizontal_meta.csv")
 
-
-meta <-  read_csv("horizontal_meta.csv")
-
-srt2@meta.data <- srt2@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType,cellGroup)) %>% 
+# Update metadata for lung samples
+srt2@meta.data <- srt2@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType, cellGroup)) %>%
   mutate(tissue = case_when(
     samptype == "bec" ~ "Thymus",
     samptype == "EEC" ~ "Esophagus",
     samptype == "BEC" ~ "Bronchus",
     samptype == "LEC" ~ "Lung"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+  )) %>%
+  mutate(group_label = str_glue("{cellType} {tissue}")) %>%
   column_to_rownames("barcode")
 
-Idents(srt2)<-'cellType'
-DimPlot(srt2,label = TRUE,label.box = TRUE)
-srt2<-subset(srt2,idents=c('Doublets'),invert=TRUE)
+Idents(srt2) <- 'cellType'
+DimPlot(srt2, label = TRUE, label.box = TRUE)
+srt2 <- subset(srt2, idents = c('Doublets'), invert = TRUE)
+DefaultAssay(srt2) <- 'integrated'
+srt2 <- RunUMAP(srt2, dims = 1:50, n.neighbors = 200, min.dist = 1.5, seed.use = 135)
+DimPlot(srt2, label = TRUE)
 
-DefaultAssay(srt2)<-'integrated'
-srt2<-RunUMAP(srt2,dims = 1:50, n.neighbors = 200,min.dist = 1.5,seed.use = 135)
-DimPlot(srt2,label = TRUE)
-
-
-ord <- c('Bud Tip Progenitor', 'Bud Tip Progenitor Adjacent', 'Multiciliated', 'Secretory', 'Epithelial Basal', 'Neuroendocrine', 'T Cell', 'B Cell', 'Macrophage', 'Fibroblast', 'Mesothelial', 'VSMC', 'Smooth Muscle', 'Vascular Endothelial', 'Lymphatic Endothelial', 'Neuronal')
-srt2@active.ident<-factor(srt2@active.ident,levels = ord)
-new.cluster.ids <- c('BTP', 'BTP Adj.', 'MC', 'Secretory', 'Epi. Basal', 'NE', 'T Cell', 'B Cell', 'Mac.', 'Fib.', 'Meso.', 'VSMC', 'SM', 'V Endo.', 'L Endo.', 'Neu.')
+# Rename lung clusters for clarity
+ord <- c('Bud Tip Progenitor', 'Bud Tip Progenitor Adjacent', 'Multiciliated', 
+         'Secretory', 'Epithelial Basal', 'Neuroendocrine', 'T Cell', 'B Cell', 
+         'Macrophage', 'Fibroblast', 'Mesothelial', 'VSMC', 'Smooth Muscle', 
+         'Vascular Endothelial', 'Lymphatic Endothelial', 'Neuronal')
+srt2@active.ident <- factor(srt2@active.ident, levels = ord)
+new.cluster.ids <- c('BTP', 'BTP Adj.', 'MC', 'Secretory', 'Epi. Basal', 
+                     'NE', 'T Cell', 'B Cell', 'Mac.', 'Fib.', 'Meso.', 
+                     'VSMC', 'SM', 'V Endo.', 'L Endo.', 'Neu.')
 names(new.cluster.ids) <- levels(srt2)
 srt2 <- RenameIdents(srt2, new.cluster.ids)
 
+# Define colors and plot UMAP with repelled labels, nudging 'Epi. Basal' if needed
+cols <- c('darkred', "#E67E22", '#F1ADA1', '#DF5D5D', '#E11919', '#7F4040', 
+          '#C4E1FC', '#87C4FD', '#008FDC', '#AE88DB', '#A26A27', '#B48D60', 
+          '#B5A28C', '#99DF93', "#008000", '#B8B8B8')
+p <- DimPlot(srt2, pt.size = 0.8, cols = cols) + NoLegend() + NoAxes()
+m <- DimPlot(srt2, reduction = 'umap', combine = FALSE)
+df_median <- m[[1]][["data"]] %>% 
+  group_by_at(vars(ident)) %>% 
+  summarise_at(vars(contains("UMAP")), median, na.rm = TRUE)
+plt <- p[[1]] +
+  geom_text_repel(data = df_median,
+                  size = 7, min.segment.length = 0, force = 10, force_pull = 8,
+                  nudge_x = ifelse(grepl('Epi. Basal', df_median$ident), -2, 0),
+                  aes(UMAP_1, UMAP_2, label = ident, bg.color = "white", bg.r = 0.2, size = 20),
+                  color = "black", show.legend = FALSE) +
+  theme(legend.text = element_text(size = 20))
+plt
 
-cols<-c('darkred',"#E67E22", '#F1ADA1', '#DF5D5D', '#E11919' ,'#7F4040', '#C4E1FC', '#87C4FD', '#008FDC', '#AE88DB', '#A26A27', '#B48D60', '#B5A28C', '#99DF93', "#008000", '#B8B8B8')
-
-
-p<-DimPlot(srt2,pt.size = 0.8,cols = cols)+NoLegend()+NoAxes()
-m<-DimPlot(srt2,reduction='umap',combine=FALSE)
-z<-m[[1]][["data"]]
-df_median <- z %>% 
-  group_by_at(vars(c(ident))) %>% 
-  summarise_at(vars(contains("UMAP")), ~ median(., na.rm = T))
-
-plt<-p[[1]] 
-plt<-plt + NoAxes()+ NoLegend()+
-  geom_text_repel(data=df_median,size=7,min.segment.length = 0,force=10,force_pull = 8,nudge_x = ifelse(grepl('Epi. Basal',df_median$ident), -2,0),aes(UMAP_1,UMAP_2,label=ident,bg.color = "white", bg.r = 0.2,size=20),color="black", show.legend = F)+ theme(legend.text = element_text(size=20))
-
-#######Fetal Esophagus Seurat
+# ---------------------------
+# Fetal Esophagus Processing
+# ---------------------------
 srt3 <- readRDS("eecsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
+meta <- read_csv("horizontal_meta.csv")
 
-
-meta <-  read_csv("horizontal_meta.csv")
-
-srt3@meta.data <- srt3@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType,cellGroup)) %>% 
+# Merge metadata and set tissue information
+srt3@meta.data <- srt3@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType, cellGroup)) %>%
   mutate(tissue = case_when(
     samptype == "lec" ~ "Thymus",
     samptype == "EEC" ~ "Esophagus",
     samptype == "lec" ~ "Bronchus",
     samptype == "LEC" ~ "Lung"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+  )) %>%
+  mutate(group_label = str_glue("{cellType} {tissue}")) %>%
   column_to_rownames("barcode")
 
-Idents(srt3)<-'cellType'
-DimPlot(srt3,label = TRUE,label.box = TRUE)
-#srt3<-subset(srt3,idents=c('Doublets'),invert=TRUE)
+Idents(srt3) <- 'cellType'
+DimPlot(srt3, label = TRUE, label.box = TRUE)
+# Optionally remove doublets if needed:
+# srt3 <- subset(srt3, idents = c('Doublets'), invert = TRUE)
+DefaultAssay(srt3) <- 'integrated'
+srt3 <- RunUMAP(srt3, dims = 1:50, n.neighbors = 200, min.dist = 1.5, seed.use = 135)
 
-DefaultAssay(srt3)<-'integrated'
-srt3<-RunUMAP(srt3,dims = 1:50, n.neighbors = 200,min.dist = 1.5,seed.use = 135)
-
-ord <- c('Epithelial Basal', 'Suprabasal', 'Multiciliated', 'Gastric Epithelial', 'T Cell', 'Macrophage', 'Fibroblast', 'VSMC', 'Smooth Muscle', 'Vascular Endothelial', 'Neuronal')
-srt3@active.ident<-factor(srt3@active.ident,levels = ord)
-new.cluster.ids <- c('Epi. Basal', 'Suprabasal', 'MC', 'Gastric Epi.', 'T Cell', 'Mac.', 'Fib.', 'VSMC', 'SM', 'V Endo.', 'Neu.')
+# Rename esophagus clusters for clarity
+ord <- c('Epithelial Basal', 'Suprabasal', 'Multiciliated', 'Gastric Epithelial', 
+         'T Cell', 'Macrophage', 'Fibroblast', 'VSMC', 'Smooth Muscle', 
+         'Vascular Endothelial', 'Neuronal')
+srt3@active.ident <- factor(srt3@active.ident, levels = ord)
+new.cluster.ids <- c('Epi. Basal', 'Suprabasal', 'MC', 'Gastric Epi.', 'T Cell', 
+                     'Mac.', 'Fib.', 'VSMC', 'SM', 'V Endo.', 'Neu.')
 names(new.cluster.ids) <- levels(srt3)
 srt3 <- RenameIdents(srt3, new.cluster.ids)
 
+# Define colors and plot UMAP with cluster labels
+cols <- c('darkred', "#E67E22", '#F1ADA1', '#DF5D5D', '#C4E1FC', '#3E73ED', 
+          '#AE88DB', '#A26A27', '#D2B48C', '#99DF93', '#B8B8B8')
+p <- DimPlot(srt3, pt.size = 0.8, cols = cols) + NoLegend() + NoAxes()
+m <- DimPlot(srt3, reduction = 'umap', combine = FALSE)
+df_median <- m[[1]][["data"]] %>% 
+  group_by_at(vars(ident)) %>% 
+  summarise_at(vars(contains("UMAP")), median, na.rm = TRUE)
+plt <- p[[1]] +
+  geom_text_repel(data = df_median,
+                  size = 7, min.segment.length = 0, force = 10, force_pull = 10,
+                  aes(UMAP_1, UMAP_2, label = ident, bg.color = "white", bg.r = 0.2, size = 20),
+                  color = "black", show.legend = FALSE) +
+  theme(legend.text = element_text(size = 20))
+plt
 
-cols<-c('darkred',"#E67E22", '#F1ADA1', '#DF5D5D', '#C4E1FC', '#3E73ED', '#AE88DB', '#A26A27', '#D2B48C', '#99DF93', '#B8B8B8')
-
-
-p<-DimPlot(srt3,pt.size = 0.8,cols = cols)+NoLegend()+NoAxes()
-m<-DimPlot(srt3,reduction='umap',combine=FALSE)
-z<-m[[1]][["data"]]
-df_median <- z %>% 
-  group_by_at(vars(c(ident))) %>% 
-  summarise_at(vars(contains("UMAP")), ~ median(., na.rm = T))
-
-plt<-p[[1]] 
-plt<-plt + NoAxes()+ NoLegend()+
-  geom_text_repel(data=df_median,size=7,min.segment.length = 0,force=10,force_pull = 10,aes(UMAP_1,UMAP_2,label=ident,bg.color = "white", bg.r = 0.2,size=20),color="black", show.legend = F)+ theme(legend.text = element_text(size=20))
 
 
