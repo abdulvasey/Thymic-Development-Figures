@@ -9,7 +9,7 @@ library(ggplot2)
 seurat_obj <- readRDS("all_red.epi.from.individual.overall.int.rds")
 meta_data <- read_csv("horizontal_meta.csv")
 
-# Load gene network clusters, from Fig. 2C. List of character vectors containing names of regulons in each subnetwork.
+# Load gene network clusters, object 'k' from Fig. 2C. List of character vectors containing names of regulons in each subnetwork.
 gene_modules <- readRDS('network clusters.RDS')
 
 # Merge metadata and assign group labels
