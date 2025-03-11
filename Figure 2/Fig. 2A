@@ -1,97 +1,84 @@
+# Load Required Libraries
 library(tidyverse)
 library(Seurat)
-library (viridis)
+library(viridis)
 library(ggrastr)
 library(RColorBrewer)
 library(igraph)
 library(ggplot2)
 library(ggrepel)
 
-####AUCell matrix of SCENIC run with all horizontal epithelial cells
+# Load AUCell Matrix from SCENIC Analysis
 reg_motif <- read_csv("hori_scenic.csv")
+srt_motif <- reg_motif %>%
+  column_to_rownames("Cell") %>%
+  rename_all(~str_remove(., "\\(\\+\\)")) %>%
+  as.matrix() %>%
+  Matrix::Matrix(sparse = TRUE) %>%
+  Matrix::t() %>%
+  CreateSeuratObject(counts = .)
 
-srt_motif <- reg_motif %>% 
-  column_to_rownames("Cell") %>% 
-  rename_all(~str_remove(., "\\(\\+\\)")) %>% 
-  as.matrix() %>% 
-  Matrix::Matrix(sparse = T) %>% 
-  Matrix::t()
-
-
-srt_motif <- CreateSeuratObject(counts = srt_motif)
-
-srt_motif <- NormalizeData(srt_motif,normalization.method = "CLR")
+# Normalize and Process Seurat Object
+srt_motif <- NormalizeData(srt_motif, normalization.method = "CLR")
 srt_motif <- FindVariableFeatures(srt_motif)
 srt_motif <- ScaleData(srt_motif)
 srt_motif <- RunPCA(srt_motif, features = VariableFeatures(srt_motif))
 
+# Load Metadata and Merge
 meta <- read_csv("horizontal_meta.csv")
-
-srt_motif@meta.data <- srt_motif@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% select(barcode,cellType, cellGroup,tissue)) %>% 
+srt_motif@meta.data <- srt_motif@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType, cellGroup, tissue)) %>%
   mutate(tissue = case_when(
     tissue == "tec" ~ "Thymus",
     tissue == "eec" ~ "Esophagus",
     tissue == "bec" ~ "Bronchus",
     tissue == "lec" ~ "Lung"
-  )) %>% 
-  mutate(group_label = str_glue("{tissue}_{cellType}")) %>% 
+  )) %>%
+  mutate(group_label = str_glue("{tissue}_{cellType}")) %>%
   column_to_rownames("barcode")
 
+# Rename & Reorder Cluster Names
+Idents(srt_motif) <- 'cellType'
+srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor` = "BTP", `Bud Tip Progenitor Adjacent` = "BTP Adjacent")
+cluster_order <- c('mcTEC','cTEC','mTECI','mTECII','mTECIII/IV','TECneuro','TECmyo',
+                   'Epithelial Basal','Club','Goblet','Submucosal Gland','BTP','BTP Adjacent',
+                   'Secretory','Neuroendocrine','Suprabasal','Gastric Epithelial','Multiciliated')
+srt_motif@active.ident <- factor(srt_motif@active.ident, levels = cluster_order)
 
-####renaming and shortening cluster names
-Idents(srt_motif)<-'cellType'
-srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor` = "BTP")
-srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor Adjacent` = "BTP Adjacent")
-ord<-c('mcTEC','cTEC', 'mTECI','mTECII', 'mTECIII/IV', 'TECneuro', 'TECmyo','Epithelial Basal',"Club","Goblet", 'Submucosal Gland','BTP', 'BTP Adjacent', 'Secretory',"Neuroendocrine","Suprabasal","Gastric Epithelial","Multiciliated")
-srt_motif@active.ident<-factor(srt_motif@active.ident,levels=ord)
+# Shortened Cluster Labels
+new_cluster_ids <- c('mcTEC','cTEC','mTECI','mTECII','mTECIII/IV','TECneuro','TECmyo',
+                     'Epi. Basal','Club','Goblet','Submuc.','BTP','BTP Adj.',
+                     'Sec.','NE','Suprabasal','Gastric','MC')
+names(new_cluster_ids) <- levels(srt_motif)
+srt_motif <- RenameIdents(srt_motif, new_cluster_ids)
 
-new.cluster.ids <- c('mcTEC','cTEC', 'mTECI','mTECII', 'mTECIII/IV', 'TECneuro', 'TECmyo','Epi. Basal',"Club","Goblet", 'Submuc.','BTP', 'BTP Adj.', 'Sec.',"NE","Suprabasal","Gastric","MC")
-names(new.cluster.ids) <- levels(srt_motif)
-srt_motif <- RenameIdents(srt_motif, new.cluster.ids)
+# Run UMAP for Visualization
+srt_motif <- RunUMAP(srt_motif, dims = 1:15, min.dist = 0.4, seed.use = 50)
 
-
-###UMAPs
-
-####by cell type
-srt_motif <- RunUMAP(srt_motif, dims = 1:15,min.dist = 0.4,seed.use = 50)
-cols<-c("#FF6B81", "#FFD700", "#6FCF97", "#55E6C1", "#F57B51", "#9B90BC", "#FF935F", "#AFEEEE", "#50B2C0", "#FF7F50", "#6AAF6D", "#BB6BD9", "#78E08F", "#FD7272", "#FFD700", "#5DA2D5", "#FFAC81", "#D2B4DE"
-)
-
-
-
-Idents(srt_motif)<-'cellType'
-
-p<-DimPlot(srt_motif,pt.size = 0.3,shuffle = TRUE,cols = cols)+NoLegend()+NoAxes()
-m<-DimPlot(srt_motif,reduction='umap',combine=FALSE)
-z<-m[[1]][["data"]]
-df_median <- z %>% 
-  group_by_at(vars(c(ident))) %>% 
-  summarise_at(vars(contains("UMAP")), ~ median(., na.rm = T))
-
-plt<-p[[1]] 
-plt<-plt + NoAxes()+ NoLegend()+
-  geom_text_repel(data=df_median,size=7,min.segment.length = 0,force=10,force_pull = 0,aes(UMAP_1,UMAP_2,label=ident,bg.color = "white", bg.r = 0.2,size=20),color="black", show.legend = F)+ theme(legend.text = element_text(size=20))
-plt
+# Define Custom Colors
+celltype_colors <- c("#FF6B81", "#FFD700", "#6FCF97", "#55E6C1", "#F57B51", "#9B90BC",
+                     "#FF935F", "#AFEEEE", "#50B2C0", "#FF7F50", "#6AAF6D", "#BB6BD9",
+                     "#78E08F", "#FD7272", "#FFD700", "#5DA2D5", "#FFAC81", "#D2B4DE")
 
 
+# UMAP by Organ with Labels
+Idents(srt_motif) <- 'tissue'
+organ_levels <- c('Thymus', 'Bronchus', 'Lung', 'Esophagus')
+srt_motif@active.ident <- factor(srt_motif@active.ident, levels = organ_levels)
 
-##########by organ
+organ_colors <- c("#D95F02", "#7570B3", "#1B9E77", "#E7298A")
+p2 <- DimPlot(srt_motif, pt.size = 0.3, shuffle = TRUE, cols = organ_colors) + NoLegend() + NoAxes()
+medians_df2 <- p2[[1]]$data %>%
+  group_by(ident) %>%
+  summarise(across(starts_with("UMAP"), median, na.rm = TRUE))
 
-Idents(srt_motif)<-'tissue'
-ident<- c('Thymus',"Bronchus","Lung","Esophagus")
-srt_motif@active.ident<-factor(srt_motif@active.ident,levels=ident)
+plt2 <- p2[[1]] +
+  geom_text_repel(data = medians_df2, aes(UMAP_1, UMAP_2, label = ident),
+                  size = 7, min.segment.length = 0, force = 10,
+                  force_pull = 0, bg.color = "white", bg.r = 0.2,
+                  color = "black", show.legend = FALSE) +
+  theme(legend.text = element_text(size = 20))
+plt2
 
-p<-DimPlot(srt_motif,pt.size = 0.3,shuffle = TRUE,cols = c( "#D95F02", "#7570B3", "#1B9E77","#E7298A"))+NoLegend()+NoAxes()
-m<-DimPlot(srt_motif,reduction='umap',combine=FALSE)
-z<-m[[1]][["data"]]
-df_median <- z %>% 
-  group_by_at(vars(c(ident))) %>% 
-  summarise_at(vars(contains("UMAP")), ~ median(., na.rm = T))
-
-plt<-p[[1]] 
-plt<-plt + NoAxes()+ NoLegend()+
-  geom_text_repel(data=df_median,size=7,min.segment.length = 0,force=10,force_pull = 0,aes(UMAP_1,UMAP_2,label=ident,bg.color = "white", bg.r = 0.2,size=20),color="black", show.legend = F)+ theme(legend.text = element_text(size=20))
-plt
