@@ -41,7 +41,7 @@ for (tf in tf_list) {
 edge_df <- data.frame(TF = source_tfs, target = target_tfs, stringsAsFactors = FALSE)
 
 # Load GRNBoost2 adjacency matric from the same SCENIC run and merge
-grnboost_adj <- read.csv("adj.csv")
+grnboost_adj <- read.csv("hori_adj.csv")
 grnboost_adj$edge_id <- paste(grnboost_adj$TF, grnboost_adj$target)
 edge_df$edge_id <- paste(edge_df$TF, edge_df$target)
 
