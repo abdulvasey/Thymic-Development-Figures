@@ -7,8 +7,8 @@ library(ggplot2)
 library(ggnetwork)
 library(ggrepel)
 
-# Load motif-target data
-motif_data <- read_csv("/Users/avymohd/Documents/Single Cell Analysis/SCENIC/Practice/Horizontal epithelial redo/new connections/regallepi3_redo (3) copy.csv") %>%
+# hori_reg.csv contains enriched motifs and target genes from SCENIC run of all fetal epithelial cells.
+motif_data <- read_csv("hori_reg.csv") %>%
   rename(TF = 1, target_column = 9) %>%
   slice(-c(1, 2))
 
@@ -40,8 +40,8 @@ for (tf in tf_list) {
 
 edge_df <- data.frame(TF = source_tfs, target = target_tfs, stringsAsFactors = FALSE)
 
-# Load GRNBoost2 adjacencies and merge
-grnboost_adj <- read.csv("/Users/avymohd/Documents/Single Cell Analysis/SCENIC/Practice/Horizontal epithelial redo/new connections/adjallepi3_redo (2).csv")
+# Load GRNBoost2 adjacency matric from the same SCENIC run and merge
+grnboost_adj <- read.csv("adj.csv")
 grnboost_adj$edge_id <- paste(grnboost_adj$TF, grnboost_adj$target)
 edge_df$edge_id <- paste(edge_df$TF, edge_df$target)
 
