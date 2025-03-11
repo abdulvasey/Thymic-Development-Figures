@@ -1,137 +1,155 @@
+# Load Required Libraries
 library(Seurat)
 library(tidyverse)
 
+### Thymus: 
+srt <- readRDS("tecsamps-horiz-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
+meta <- read_csv("horizontal_meta.csv")
 
-######Seurat of all fetal Thymus cells
-srt<-readRDS("tecsamps-horiz-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
+# Annotate Metadata and Tissue
+srt@meta.data <- srt@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType)) %>%
+  mutate(
+    tissue = case_when(
+      samptype == "TEC" ~ "T",
+      samptype == "EEC" ~ "E",
+      samptype == "BEC" ~ "B",
+      samptype == "LEC" ~ "L"
+    ),
+    group_label = str_glue("{cellType} {tissue}")
+  ) %>%
+  column_to_rownames("barcode")
 
-meta <-  read_csv("horizontal_meta.csv")
+srt <- SetIdent(srt, value = "cellType")
+DefaultAssay(srt) <- "RNA"
+srt <- subset(srt, idents = "Doublets", invert = TRUE)
+
+canonical_genes <- c('EPCAM', 'PSMB11', 'CCL25', 'KRT8', 'TP63', 'CTGF', 'DLK2', 'KRT5', 'KRT14', 'CCL19', 'AIRE',
+                     'CLDN4', 'KRT1', 'POU2F3', 'NEUROD1', 'CHGA', 'MYOD1', 'CHRNA1', 'TRDC', 'PTPRC', 'CD3D', 'CD4',
+                     'CD8A', 'CD8B', 'S100A9', 'RETN', 'LAMP3', 'PDGFRA', 'IGF2.1', 'COLEC11', 'ALDH1A2', 'FBN1',
+                     'MKI67', 'LUM', 'PI16', 'PDGFRB', 'ACTA2', 'AQP1', 'PECAM1', 'CDH5', 'PROX1', 'NRXN1')
+
+tissue_order <- c('mcTEC','cTEC', 'mTECI',"mTECII", 'mTECIII/IV', 'TECneuro', 'TECmyo',
+                  'DN Thymocyte', 'SP/DP Thymocyte', 'Macrophage', 'Dendritic',
+                  'Fibroblast 1', 'Fibroblast 1 Cycling', 'Fibroblast 2', 'VSMC',
+                  'Vascular Endothelial', 'Lymphatic Endothelial', 'Neuronal')
+
+srt@active.ident <- factor(srt@active.ident, levels = rev(tissue_order))
+
+DotPlot(srt, features = canonical_genes, assay = "RNA", cols = c('white','darkred')) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, face = "italic", size = 10, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 10)) +
+  ggtitle('Thymus')
 
 
+### Bronchus: 
+srt <- readRDS("becsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
 
-srt@meta.data <- srt@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType)) %>% 
+srt@meta.data <- srt@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType)) %>%
   mutate(tissue = case_when(
     samptype == "TEC" ~ "T",
     samptype == "EEC" ~ "E",
     samptype == "BEC" ~ "B",
     samptype == "LEC" ~ "L"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+  )) %>%
+  mutate(group_label = str_glue("{cellType} {tissue}")) %>%
   column_to_rownames("barcode")
 
 srt <- SetIdent(srt, value = "cellType")
-DefaultAssay(srt)<-"RNA"
+DefaultAssay(srt) <- "RNA"
+srt <- subset(srt, idents = "Doublets", invert = TRUE)
 
-#removing doublets
-srt<-subset(srt,idents = "Doublets",invert=TRUE)
+bronchus_order <- c('Epithelial Basal','Club', 'Goblet', 'Submucosal Gland', 'Secretory','Multiciliated',
+                    'Bud Tip Progenitor','Myoepithelial', 'T Cell', 'B Cell','Macrophage',
+                    'Fibroblast', 'VSMC', 'Smooth Muscle', 'Cartilage', 'Vascular Endothelial', 'Neuronal')
 
-##select canonical genes for each cluster
-gene<-c('EPCAM', 'PSMB11', 'CCL25', 'KRT8', 'TP63', 'CTGF', 'DLK2', 'KRT5', 'KRT14', 'CCL19', 'AIRE',"CLDN4", 'KRT1', 'POU2F3', 'NEUROD1', 'CHGA', 'MYOD1', 'CHRNA1', 'TRDC', 'PTPRC', 'CD3D', 'CD4', 'CD8A', 'CD8B', 'S100A9', 'RETN', 'LAMP3', 'PDGFRA', 'IGF2.1', 'COLEC11', 'ALDH1A2', 'FBN1', 'MKI67', 'LUM', 'PI16', 'PDGFRB',"ACTA2", 'AQP1','PECAM1', 'CDH5', 'PROX1', 'NRXN1')
-ord<-c('mcTEC','cTEC', 'mTECI',"mTECII", 'mTECIII/IV', 'TECneuro', 'TECmyo', 'DN Thymocyte', 'SP/DP Thymocyte', 'Macrophage', 'Dendritic', 'Fibroblast 1', 'Fibroblast 1 Cycling', 'Fibroblast 2', 'VSMC', 'Vascular Endothelial', 'Lymphatic Endothelial', 'Neuronal')
-srt@active.ident<-factor(srt@active.ident,levels = rev(ord))
+bronchus_genes <- c('EPCAM','SOX9','KRT5', 'KRT15', 'TP63', 'KRT8','IL33','DLK2','SCGB1A1', 'BPIFA1', 'BPIFB1',
+                    'MUC5B', 'LTF','SFTPB','SCGB3A2','FOXJ1', 'PIFO','SFTPC', 'FGFR1', 'PTPRC', 'CD3', 'CD3D',
+                    'MS4A1','S100A9','RETN','CD14','HLA-DRA', 'PDGFRA', 'FBN1', 'PDGFRB', 'ACTA2', 'DES', 'CNMD',
+                    'AQP1','PECAM1', 'CDH5', 'NRXN1')
 
-####dotplot construction
-dp<-DotPlot(srt, features = gene,assay = "RNA",cols = c('white','darkred')) + theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, face = "italic", size = 10, hjust=1,vjust=0.5),axis.text.y = element_text( size = 10))+ggtitle('Thymus')
-dp
+srt@active.ident <- factor(srt@active.ident, levels = rev(bronchus_order))
+
+DotPlot(srt, features = bronchus_genes, assay = "RNA", cols = c('white','darkred')) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, size = 10, hjust = 1, vjust = 0.5, face = 'italic'),
+        axis.text.y = element_text(size = 10)) +
+  ggtitle('Bronchus')
 
 
-########plots below for different organs follow similar pipeline as above
+### Lung: 
+srt <- readRDS("lecsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
 
-#########Fetal Bronchus cells
-
-srt<-readRDS("becsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
-
-srt@meta.data <- srt@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType)) %>% 
+srt@meta.data <- srt@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType)) %>%
   mutate(tissue = case_when(
     samptype == "TEC" ~ "T",
     samptype == "EEC" ~ "E",
     samptype == "BEC" ~ "B",
     samptype == "LEC" ~ "L"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+  )) %>%
+  mutate(group_label = str_glue("{cellType} {tissue}")) %>%
   column_to_rownames("barcode")
 
 srt <- SetIdent(srt, value = "cellType")
-DefaultAssay(srt)<-"RNA"
-DimPlot(srt, reduction="tsne")
-srt<-subset(srt,idents = c("Doublets"),invert=TRUE)
+DefaultAssay(srt) <- "RNA"
+srt <- subset(srt, idents = "Doublets", invert = TRUE)
 
-ord<-c( 'Epithelial Basal','Club', 'Goblet', 'Submucosal Gland', 'Secretory','Multiciliated','Bud Tip Progenitor','Myoepithelial', 'T Cell', 'B Cell','Macrophage', 'Fibroblast', 'VSMC', 'Smooth Muscle', 'Cartilage', 'Vascular Endothelial', 'Neuronal')
-gene<-c('EPCAM','SOX9','KRT5', 'KRT15', 'TP63', 'KRT8',"IL33","DLK2",'SCGB1A1', 'BPIFA1', 'BPIFB1', 'MUC5B', 'LTF','SFTPB','SCGB3A2','FOXJ1', 'PIFO','SFTPC', 'FGFR1', 'PTPRC', 'CD3', 'CD3D', 'MS4A1','S100A9',"RETN","CD14",'HLA-DRA', 'PDGFRA', 'FBN1', 'PDGFRB', 'ACTA2', 'DES', 'CNMD', 'AQP1','PECAM1', 'CDH5', 'NRXN1')
+lung_order <- c('Bud Tip Progenitor', 'Bud Tip Progenitor Adjacent', 'Multiciliated', 'Secretory Progenitor',
+                'Epithelial Basal', 'Neuroendocrine', 'T Cell', 'B Cell', 'Macrophage', 'Fibroblast',
+                'Mesothelial', 'VSMC', 'Smooth Muscle', 'Vascular Endothelial', 'Lymphatic Endothelial', 'Neuronal')
 
-srt@active.ident<-factor(srt@active.ident,levels = rev(ord))
-#DimPlot(srt, reduction="tsne")
-dp<-DotPlot(srt, features = gene,assay = "RNA",cols = c('white','darkred')) + theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, size = 10, hjust=1,vjust=0.5,face='italic'),axis.text.y = element_text(size = 10))+ggtitle('Bronchus')
-dp
+lung_genes <- c('SFTPC', 'EPCAM', 'SOX9', 'AGER', 'FOXJ1', 'PIFO', 'SCGB3A2', 'SFTPB', 'KRT5', 'KRT15',
+                'TP63', 'KRT8','IL33','DLK2', 'CHGA', 'PTPRC', 'CD3', 'CD3D', 'MS4A1', 'HLA-DRA', 'S100A9',
+                'RETN', 'CD14', 'PDGFRA', 'FBN1', 'MSLN', 'ALDH1A2', 'PDGFRB', 'ACTA2', 'DES', 'AQP1','PECAM1',
+                'CDH5', 'PROX1', 'LYVE1', 'NRXN1')
 
-#########Fetal Lung cells
+srt@active.ident <- factor(srt@active.ident, levels = rev(lung_order))
 
-srt<-readRDS("/Users/avymohd/Documents/Single Cell Analysis/Seurats from Ben/lecsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
+DotPlot(srt, features = lung_genes, assay = "RNA", cols = c('white','darkred')) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, face = "italic", size = 10, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 10)) +
+  ggtitle("Lung")
 
-srt@meta.data <- srt@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType)) %>% 
+
+### Esophagus: 
+srt <- readRDS("eecsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
+
+srt@meta.data <- srt@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType)) %>%
   mutate(tissue = case_when(
     samptype == "TEC" ~ "T",
     samptype == "EEC" ~ "E",
     samptype == "BEC" ~ "B",
     samptype == "LEC" ~ "L"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+  )) %>%
+  mutate(group_label = str_glue("{cellType} {tissue}")) %>%
   column_to_rownames("barcode")
 
 srt <- SetIdent(srt, value = "cellType")
-DefaultAssay(srt)<-"RNA"
-DimPlot(srt, reduction="tsne")
-srt<-subset(srt,idents = c("Doublets"),invert=TRUE)
+DefaultAssay(srt) <- "RNA"
+esophagus_order <- c('Epithelial Basal', 'Suprabasal', 'Multiciliated', 'Gastric Epithelial',
+                     'T Cell', 'Macrophage', 'Fibroblast', 'VSMC', 'Smooth Muscle', 'Vascular Endothelial', 'Neuronal')
 
-ord<-c('Bud Tip Progenitor', 'Bud Tip Progenitor Adjacent', 'Multiciliated', 'Secretory Progenitor', 'Epithelial Basal', 'Neuroendocrine', 'T Cell', 'B Cell', 'Macrophage', 'Fibroblast', 'Mesothelial', 'VSMC', 'Smooth Muscle', 'Vascular Endothelial', 'Lymphatic Endothelial', 'Neuronal' )
-gene<-c('SFTPC', 'EPCAM', 'SOX9', 'AGER', 'FOXJ1', 'PIFO', 'SCGB3A2', 'SFTPB', 'KRT5', 'KRT15', 'TP63', 'KRT8',"IL33","DLK2", 'CHGA', 'PTPRC', 'CD3', 'CD3D', 'MS4A1', 'HLA-DRA', 'S100A9', 'RETN', 'CD14', 'PDGFRA', 'FBN1', 'MSLN', 'ALDH1A2', 'PDGFRB', 'ACTA2', 'DES', 'AQP1','PECAM1', 'CDH5', 'PROX1', 'LYVE1', 'NRXN1')
-srt@active.ident<-factor(srt@active.ident,levels = rev(ord))
+genes_esophagus <- c('EPCAM', 'KRT5', 'KRT15','DLK2', 'TP63', 'KRT8', 'KRT13', 'KRT4', 'CLDN4', 'FOXJ1',
+                     'PIFO', 'TFF1', 'MUC5B', 'PTPRC', 'CD3D','S100A9','RETN', 'CD14', 'PDGFRA', 'IGF2.1',
+                     'FBN1', 'LUM', 'PI16', 'PDGFRB', 'ACTA2', 'DES', 'AQP1','PECAM1', 'CDH5', 'NRXN1')
 
-dp<-DotPlot(srt, features = gene,assay = "RNA",cols = c('white','darkred'))+  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, face = "italic", size = 10, hjust=1,vjust=0.5),axis.text.y = element_text(size = 10))+ggtitle("Lung")
-dp
+srt@active.ident <- factor(srt@active.ident, levels = rev(esophagus_order))
 
-#########Fetal Esophagus cells
-
-
-srt<-readRDS("/Users/avymohd/Documents/Single Cell Analysis/Seurats from Ben/eecsamps-new3000.1000.1000-100000.3MAD10.SCT.regressed.int.rds")
-
-srt@meta.data <- srt@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType)) %>% 
-  mutate(tissue = case_when(
-    samptype == "TEC" ~ "T",
-    samptype == "EEC" ~ "E",
-    samptype == "BEC" ~ "B",
-    samptype == "LEC" ~ "L"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
-  column_to_rownames("barcode")
-
-srt <- SetIdent(srt, value = "cellType")
-DefaultAssay(srt)<-"RNA"
-DimPlot(srt, reduction="tsne")
-
-ord<-c('Epithelial Basal', 'Suprabasal', 'Multiciliated', 'Gastric Epithelial', 'T Cell', 'Macrophage', 'Fibroblast', 'VSMC', 'Smooth Muscle', 'Vascular Endothelial', 'Neuronal')
-gene<-c('EPCAM', 'KRT5', 'KRT15','DLK2', 'TP63', 'KRT8', 'KRT13', 'KRT4', 'CLDN4', 'FOXJ1', 'PIFO', 'TFF1', 'MUC5B', 'PTPRC', 'CD3D','S100A9','RETN', 'CD14', 'PDGFRA', 'IGF2.1', 'FBN1', 'LUM', 'PI16', 'PDGFRB', 'ACTA2', 'DES', "AQP1",'PECAM1', 'CDH5', 'NRXN1' )
-srt@active.ident<-factor(srt@active.ident,levels = rev(ord))
-
-
-dp<-DotPlot(srt, features = gene,assay = "RNA",cols = c('white','darkred')) + theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, face = "italic", size = 10, hjust=1,vjust=0.5),axis.text.y = element_text(size = 10))+ggtitle("Esophagus")
-dp
-
-
-
+DotPlot(srt, features = genes_esophagus, assay = "RNA", cols = c('white','darkred')) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, face = "italic", size = 10, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 10)) +
+  ggtitle("Esophagus")
