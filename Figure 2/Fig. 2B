@@ -1,6 +1,7 @@
+# Load Required Libraries
 library(tidyverse)
 library(Seurat)
-library (viridis)
+library(viridis)
 library(ggrastr)
 library(RColorBrewer)
 library(igraph)
@@ -8,131 +9,113 @@ library(ggplot2)
 library(ggrepel)
 library(reshape2)
 
-####AUCell matrix of SCENIC run with all horizontal epithelial cells
+# Load AUCell Matrix from SCENIC Analysis
 reg_motif <- read_csv("hori_scenic.csv")
+srt_motif <- reg_motif %>%
+  column_to_rownames("Cell") %>%
+  rename_all(~str_remove(., "\\(\\+\\)")) %>%
+  as.matrix() %>%
+  Matrix::Matrix(sparse = TRUE) %>%
+  Matrix::t() %>%
+  CreateSeuratObject(counts = .)
 
-srt_motif <- reg_motif %>% 
-  column_to_rownames("Cell") %>% 
-  rename_all(~str_remove(., "\\(\\+\\)")) %>% 
-  as.matrix() %>% 
-  Matrix::Matrix(sparse = T) %>% 
-  Matrix::t()
-
-
-srt_motif <- CreateSeuratObject(counts = srt_motif)
-
-srt_motif <- NormalizeData(srt_motif,normalization.method = "CLR")
+# Normalize and Process Seurat Object
+srt_motif <- NormalizeData(srt_motif, normalization.method = "CLR")
 srt_motif <- FindVariableFeatures(srt_motif)
 srt_motif <- ScaleData(srt_motif)
 srt_motif <- RunPCA(srt_motif, features = VariableFeatures(srt_motif))
 
+# Load and Merge Metadata
 meta <- read_csv("horizontal_meta.csv")
-
-srt_motif@meta.data <- srt_motif@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% select(barcode,cellType, cellGroup,tissue)) %>% 
+srt_motif@meta.data <- srt_motif@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType, cellGroup, tissue)) %>%
   mutate(tissue = case_when(
     tissue == "tec" ~ "Thymus",
     tissue == "eec" ~ "Esophagus",
     tissue == "bec" ~ "Bronchus",
     tissue == "lec" ~ "Lung"
-  )) %>% 
-  mutate(group_label = str_glue("{tissue}_{cellType}")) %>% 
+  )) %>%
+  mutate(group_label = str_glue("{tissue}_{cellType}")) %>%
   column_to_rownames("barcode")
 
+# Rename and Reorder Cell Types
+Idents(srt_motif) <- 'cellType'
+srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor` = "BTP", `Bud Tip Progenitor Adjacent` = "BTP Adjacent")
+celltype_order <- c('mcTEC','cTEC','mTECI','mTECII','mTECIII/IV','TECneuro','TECmyo',
+                    'Epithelial Basal','Club','Goblet','Submucosal Gland','BTP','BTP Adjacent',
+                    'Secretory','Neuroendocrine','Suprabasal','Gastric Epithelial','Multiciliated')
+srt_motif@active.ident <- factor(srt_motif@active.ident, levels = celltype_order)
 
-####renaming and shortening cluster names
-Idents(srt_motif)<-'cellType'
-srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor` = "BTP")
-srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor Adjacent` = "BTP Adjacent")
-ord<-c('mcTEC','cTEC', 'mTECI','mTECII', 'mTECIII/IV', 'TECneuro', 'TECmyo','Epithelial Basal',"Club","Goblet", 'Submucosal Gland','BTP', 'BTP Adjacent', 'Secretory',"Neuroendocrine","Suprabasal","Gastric Epithelial","Multiciliated")
-srt_motif@active.ident<-factor(srt_motif@active.ident,levels=ord)
+# Shorten Cluster Names
+short_names <- c('mcTEC','cTEC','mTECI','mTECII','mTECIII/IV','TECneuro','TECmyo','Epi. Basal','Club','Goblet',
+                 'Submuc.','BTP','BTP Adj.','Sec.','NE','Suprabasal','Gastric','MC')
+names(short_names) <- levels(srt_motif)
+srt_motif <- RenameIdents(srt_motif, short_names)
 
-new.cluster.ids <- c('mcTEC','cTEC', 'mTECI','mTECII', 'mTECIII/IV', 'TECneuro', 'TECmyo','Epi. Basal',"Club","Goblet", 'Submuc.','BTP', 'BTP Adj.', 'Sec.',"NE","Suprabasal","Gastric","MC")
-names(new.cluster.ids) <- levels(srt_motif)
-srt_motif <- RenameIdents(srt_motif, new.cluster.ids)
-
-######Finding differential regulons
-Idents(srt_motif)<-'tissue'
-allmarks <- FindAllMarkers(srt_motif,logfc.threshold = 0.01)
+# Find Differential Regulons by Tissue
+Idents(srt_motif) <- 'tissue'
+allmarks <- FindAllMarkers(srt_motif, logfc.threshold = 0.01)
 thymus <- subset(allmarks, cluster == "Thymus")
 esophagus <- subset(allmarks, cluster == "Esophagus")
-lung<- subset(allmarks, cluster == "Lung")
-bronchus<- subset(allmarks, cluster == "Bronchus")
+lung <- subset(allmarks, cluster == "Lung")
+bronchus <- subset(allmarks, cluster == "Bronchus")
 
-a <- thymus%>%
-  filter(p_val==0,avg_log2FC>0)%>%
-  arrange(desc(avg_log2FC))
-length(a$gene)
+# Top Regulons for Heatmap
+top_genes <- c(
+  thymus %>% filter(p_val == 0, avg_log2FC > 0) %>% arrange(desc(avg_log2FC)) %>% pull(gene) %>% head(45),
+  bronchus %>% filter(p_val == 0, avg_log2FC > 0) %>% arrange(desc(avg_log2FC)) %>% pull(gene) %>% head(20),
+  lung %>% filter(p_val == 0, avg_log2FC > 0) %>% arrange(desc(avg_log2FC)) %>% pull(gene) %>% head(20),
+  esophagus %>% filter(avg_log2FC > 0) %>% arrange(p_val) %>% pull(gene) %>% head(20)
+) %>% unique()
 
+# Rename and Reorder Clusters by Organ-Specific Labels
+Idents(srt_motif) <- 'group_label'
+srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor L` = "BTP L",
+                                       `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L",
+                                       `Bud Tip Progenitor B` = "BTP B")
 
-b <- bronchus%>%
-  filter(p_val==0,avg_log2FC>0)%>%
-  arrange(desc(avg_log2FC))
-length(b$gene)
+tec <- c('mcTEC T','cTEC T','mTECI T','mTECII T','mTECIII/IV T','TECneuro T','TECmyo T')
+lec <- c('BTP L','BTP Adjacent L','Multiciliated L','Secretory L','Epithelial Basal L','Neuroendocrine L')
+bec <- c('Epithelial Basal B','Club B','Goblet B','Submucosal Gland B','Secretory B','Multiciliated B','BTP B')
+eec <- c('Epithelial Basal E','Suprabasal E','Multiciliated E','Gastric Epithelial E')
+cluster_order <- c(tec, bec, lec, eec)
+srt_motif@active.ident <- factor(srt_motif@active.ident, levels = cluster_order)
 
-c <- lung%>%
-  filter(p_val==0,avg_log2FC>0)%>%
-  arrange(desc(avg_log2FC))
-length(c$gene)
+# Final Short Names for Cluster Labels
+final_short_names <- c('mcTEC T','cTEC T','mTECI T','mTECII T','mTECIII/IV T','TECneuro T','TECmyo T',
+                       'Epi. Basal B','Club B','Goblet B','Submuc. B','Sec. B','MC B','BTP B',
+                       'BTP L','BTP Adj. L','MC L','Sec. L','Epi. Basal L','NE L',
+                       'Epi. Basal E','Suprabasal E','MC E','Gastric E')
+names(final_short_names) <- levels(srt_motif)
+srt_motif <- RenameIdents(srt_motif, final_short_names)
+srt_motif@active.ident <- factor(srt_motif@active.ident, levels = final_short_names)
 
-d <- esophagus%>%
-  filter(avg_log2FC>0)%>%
-  arrange((p_val))
-length(d$gene)
+# Construct Heatmap
+avg_exp <- AverageExpression(srt_motif, slot = 'counts', features = rev(top_genes), assays = 'RNA')
+scaled_mat <- t(scale(t(avg_exp$RNA)))
 
+# Limit Scaling Values
+scaled_mat <- pmax(pmin(scaled_mat, 2.5), -2)
 
-e <- c(a$gene[1:45],b$gene[1:20],c$gene[1:20],d$gene[1:20])
-e <- unique (e)
+# Prepare Dataframe for Heatmap Plotting
+df_heatmap <- melt(scaled_mat)
+colnames(df_heatmap) <- c("x", "y", "value")
 
-
-
-##########renaming and ordering clusters
-Idents(srt_motif)<-'group_label'
-
-srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor L` = "BTP L")
-srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L")
-srt_motif <- RenameIdents(srt_motif, `Bud Tip Progenitor B` = "BTP B")
-tec<-c('mcTEC T','cTEC T', 'mTECI T',"mTECII T", 'mTECIII/IV T', 'TECneuro T', 'TECmyo T')
-lec<-c('BTP L', 'BTP Adjacent L', 'Multiciliated L', 'Secretory L', 'Epithelial Basal L', 'Neuroendocrine L')
-bec<-c('Epithelial Basal B','Club B', 'Goblet B', 'Submucosal Gland B', 'Secretory B','Multiciliated B','BTP B')
-eec<-c('Epithelial Basal E', 'Suprabasal E', 'Multiciliated E', 'Gastric Epithelial E')
-ord<-c(tec,bec,lec,eec)
-
-srt_motif@active.ident<-factor(srt_motif@active.ident,levels = ord)
-
-tec<-c('mcTEC T','cTEC T', 'mTECI T',"mTECII T", 'mTECIII/IV T', 'TECneuro T', 'TECmyo T')
-lec<-c('BTP L', 'BTP Adj. L', 'MC L', 'Sec. L', 'Epi. Basal L', 'NE L')
-bec<-c('Epi. Basal B','Club B', 'Goblet B', 'Submuc. B', 'Sec. B','MC B','BTP B')
-eec<-c('Epi. Basal E', 'Suprabasal E', 'MC E', 'Gastric E')
-ord<-c(tec,bec,lec,eec)
-new.cluster.ids <- ord
-names(new.cluster.ids) <- levels(srt_motif)
-srt_motif <- RenameIdents(srt_motif, new.cluster.ids)
-srt_motif@active.ident<-factor(srt_motif@active.ident,levels = ord)
-
-######heatmap construction
-mat1 <- AverageExpression(srt_motif, slot = 'counts',features = rev(e),assays = 'RNA')
-
-mat1 <- t(scale(t(mat1$RNA)))
-
-# Set minimum and maximum values
-min_value <- -2
-max_value <- 2.5
-
-# Limit values in the matrix to the specified min and max
-mat1 <- pmax(pmin(mat1, max_value), min_value)
-
-df<-melt(mat1)
-df<-as.data.frame(df)
-colnames(df) <- c ("x", "y", "value")
-plt<-ggplot(df, aes(x = x, y = y, fill = value)) +
+# Plot Heatmap
+ggplot(df_heatmap, aes(x = x, y = y, fill = value)) +
   geom_tile() +
   theme_minimal() +
   scale_fill_viridis(option = "magma") +
-  labs(x = NULL, y = NULL, fill = "Scaled\nexpression")+
-  theme(axis.text.x = element_text(angle = 90, size = 12,color = "black",hjust = 1),
-        axis.text.y = element_text(size = 12, color = "black",face='italic'),panel.grid = element_blank()) + ggtitle('') + coord_flip()
+  labs(x = NULL, y = NULL, fill = "Scaled\nexpression") +
+  theme(
+    axis.text.x = element_text(angle = 90, size = 12, color = "black", hjust = 1),
+    axis.text.y = element_text(size = 12, color = "black", face = 'italic'),
+    panel.grid = element_blank()
+  ) +
+  ggtitle("") +
+  coord_flip()
+
 
 
