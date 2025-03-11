@@ -1,228 +1,153 @@
-library(tidyverse)
+# Required libraries only
 library(Seurat)
-library(SingleCellExperiment)
-library(slingshot)
-library(tradeSeq)
-library(cowplot)
-library(ggrastr)
-library(DelayedMatrixStats)
-library (RColorBrewer)
-library(viridis)
-library(SCORPIUS)
-library(zoo)
-library(pheatmap)
-library(tradeSeq)
-library(reshape2)
-library (viridis)
-library(ggrastr)
-library(RColorBrewer)
-library(igraph)
-library(ggplot2)
 library(dplyr)
-library(igraph)
+library(readr)
+library(stringr)
+library(ggplot2)
+library(tidyr)
+library(reshape2)
+library(viridis)
 
-
-######Seurat of all fetal epithelial cells
+### Load Seurat object and metadata
 srt <- readRDS("all_red.epi.from.individual.overall.int.rds")
+meta <- read_csv("horizontal_meta.csv")
 
-meta <-  read_csv("horizontal_meta.csv")
-
-####top panel dotplot
-srt@meta.data <- srt@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType)) %>% 
-  mutate(tissue = case_when(
-    samptype == "TEC" ~ "T",
-    samptype == "EEC" ~ "E",
-    samptype == "BEC" ~ "B",
-    samptype == "LEC" ~ "L"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
+### Top Panel: DotPlot
+srt@meta.data <- srt@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select_at(vars(!contains("cellType"))) %>%
+  left_join(meta %>% select(barcode, cellType), by = "barcode") %>%
+  mutate(
+    tissue = case_when(
+      samptype == "TEC" ~ "T",
+      samptype == "EEC" ~ "E",
+      samptype == "BEC" ~ "B",
+      samptype == "LEC" ~ "L"
+    ),
+    group_label = str_glue("{cellType} {tissue}")
+  ) %>%
   column_to_rownames("barcode")
 
+Idents(srt) <- "tissue"
 
-Idents(srt)<-'tissue'
-genes<-c('IRF8', 'IRF1', 'NFKB1', 'HIC1', 'RELB', 'NFKB2', 'STAT1', 'ETV7', 'HIVEP3', 'FOXG1', 'IRF9', 'IRF7', 'REL', 'STAT3', 'RAD21', 'KMT2A', 'BCL3', 'DMRT2', 'NR3C1', 'CUX1', 'GABPB1', 'HIVEP1', 'STAT2', 'SIN3A', 'MAFG', 'RELA', 'ELF2', 'ETS1', 'GLI3', 'RORA', 'NFE2L1', 'ETV6', 'MXD4', 'STAT5A', 'FOXN1', 'ZEB1', 'CREM', 'PSMD12', 'ZFP64', 'FOXO1', 'POLR3A', 'THRB', 'TEAD4', 'STAT6', 'REST', 'ASCL2', 'GTF2B', 'UBTF', 'IRF3', 'POLE4', 'BHLHE41', 'BACH2', 'YY1', 'HMGB1', 'ELK4', 'SREBF1', 'SP1', 'SP6', 'PPARD', 'HOXA4')
-srt@active.ident<-factor(srt@active.ident,levels = rev(c('T','B','L','E')))
-dp<-DotPlot(srt,features=genes,cols = c('white','darkred'))+ theme_minimal() +
-  theme(axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_text(angle = 90, size = 12, hjust=1,vjust=0.5,color = 'black'),axis.text.y = element_text(size = 12,color = 'black'))+ theme()
+#Subnetwork A genes
+genes <- c('IRF8', 'IRF1', 'NFKB1', 'HIC1', 'RELB', 'NFKB2', 'STAT1', 'ETV7', 'HIVEP3', 'FOXG1', 'IRF9', 'IRF7', 
+           'REL', 'STAT3', 'RAD21', 'KMT2A', 'BCL3', 'DMRT2', 'NR3C1', 'CUX1', 'GABPB1', 'HIVEP1', 'STAT2', 
+           'SIN3A', 'MAFG', 'RELA', 'ELF2', 'ETS1', 'GLI3', 'RORA', 'NFE2L1', 'ETV6', 'MXD4', 'STAT5A', 'FOXN1', 
+           'ZEB1', 'CREM', 'PSMD12', 'ZFP64', 'FOXO1', 'POLR3A', 'THRB', 'TEAD4', 'STAT6', 'REST', 'ASCL2', 
+           'GTF2B', 'UBTF', 'IRF3', 'POLE4', 'BHLHE41', 'BACH2', 'YY1', 'HMGB1', 'ELK4', 'SREBF1', 'SP1', 'SP6', 
+           'PPARD', 'HOXA4')
+
+srt@active.ident <- factor(srt@active.ident, levels = rev(c('T', 'B', 'L', 'E')))
+
+dp <- DotPlot(srt, features = genes, cols = c('white', 'darkred')) +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5, color = 'black'),
+    axis.text.y = element_text(size = 12, color = 'black')
+  )
+
 dp
 
+### Middle Panel: Barplot of Regulon Connectivity
+adj <- read.csv("hori_adj.csv")
+edges <- read.csv("edge_all_check.csv", header = FALSE)
 
+adj$id <- paste(adj$TF, adj$target)
+edges$id <- paste(edges$V1, edges$V2)
 
+full <- inner_join(adj, edges, by = "id") %>%
+  select(-id, -V1, -V2) %>%
+  setNames(c("TF", "target", "importance"))
 
+full2 <- full %>% filter(importance > 10)
 
+# Load network clusters
+k <- readRDS('network clusters.RDS')
 
+# Subnetwork A interactions
+sub_df <- full2 %>% filter(TF %in% k[[1]], target %in% k[[1]])
 
-
-
-
-
-
-
-
-
-
-####barplot
-####all adjacencies from GRNboost2 ouput of SCENIC
-adj<-read.csv("hori_adj.csv")
-####inferred interactions from Fig 2C. Part 1 containing adjacencies found in enriched motifs
-edges <- read.csv("edge_all_check.csv", header =FALSE)
-
-
-
-#####adding GRNBoost2 importance score to adj df
-adj$id <- paste(adj$TF,adj$target)
-edges$id<- paste(edges$V1,edges$V2)
-
-full<-inner_join(adj, edges, by = "id") 
-
-full = subset(full, select = -c(id,V1,V2) )
-colnames(full) <- c("v1", "v2","weight")
-edges<-full
-edges <- as.matrix(edges)
-
-###setting minimum coexpression value threshold for matrix
-full2<-subset(full, full$weight>10)
-
-
-
-edges<-full2
-edges <- as.matrix(edges)
-
-
-
-
-####gene clusters from Fig 2C
-k<-readRDS('network clusters.RDS')
-####Isolating genes in subnetwork A
-subset_df <- full2[full2$v1 %in% k[[1]], ]
-subset_df2 <- subset_df[subset_df$v2 %in% k[[1]], ]
-df<-subset_df2
-colnames(df) <- c("TF", "Target", "Importance")
-
-#####dataframe of TFs and its targets ordered by coexpression value of interaction
-result_df <- data.frame(
-  TF = unique(df$TF),
-  Targets = sapply(unique(df$TF), function(tf) {
-    df_sub <- df[df$TF == tf, ]
-    df_sub <- df_sub[order(df_sub$Importance, decreasing = TRUE), ]
-    return(paste(df_sub$Target, collapse = ", "))
+# TF → Targets
+tf_df <- data.frame(
+  TF = unique(sub_df$TF),
+  Targets = sapply(unique(sub_df$TF), function(tf) {
+    df_sub <- sub_df[sub_df$TF == tf, ]
+    df_sub <- df_sub[order(df_sub$importance, decreasing = TRUE), ]
+    paste(df_sub$target, collapse = ", ")
   })
 )
-result_df <- result_df[order(sapply(strsplit(result_df$Targets, ","), length), decreasing = TRUE), ]
+tf_df$Num_TFs_Per_Target <- sapply(strsplit(tf_df$Targets, ","), length)
+tf_df <- tf_df[order(tf_df$Num_TFs_Per_Target, decreasing = TRUE), ]
+tf_df$Type <- "Targets"
 
-result_df <- data.frame(
-  TF = unique(df$TF),
-  Targets = sapply(unique(df$TF), function(tf) {
-    df_sub <- df[df$TF == tf, ]
-    df_sub <- df_sub[order(df_sub$Importance, decreasing = TRUE), ]
-    return(paste(df_sub$Target, collapse = ", "))
+# Target → TFs
+target_df <- data.frame(
+  Target = unique(sub_df$target),
+  TFs = sapply(unique(sub_df$target), function(target) {
+    df_sub <- sub_df[sub_df$target == target, ]
+    df_sub <- df_sub[order(df_sub$importance, decreasing = TRUE), ]
+    paste(df_sub$TF, collapse = ", ")
   })
 )
+target_df$Num_TFs_Per_Target <- sapply(strsplit(target_df$TFs, ","), length)
+target_df <- target_df[order(target_df$Num_TFs_Per_Target, decreasing = TRUE), ]
+target_df$Type <- "Targeting"
 
-result_df$Num_TFs_Per_Target <- sapply(strsplit(result_df$Targets, ","), length)
+# Harmonize columns and merge
+colnames(target_df) <- colnames(tf_df)
+combined_df <- rbind(tf_df, target_df)
 
-result_df1 <- result_df[order(result_df$Num_TFs_Per_Target, decreasing = TRUE), ]
-result_df1$Type <- rep("Targets", nrow(result_df1))
+# Combined TF list
+targets <- tf_df$TF
+targeting <- target_df$TF
+final_TFs <- c(targets, setdiff(targeting, targets))
 
+# Plot
+combined_df$TF <- factor(combined_df$TF, levels = final_TFs)
 
-######dataframe of all the Transcription factor defining regulons targeting a specific gene
-result_df <- data.frame(
-  Target = unique(df$Target),
-  TFs = sapply(unique(df$Target), function(target) {
-    df_sub <- df[df$Target == target, ]
-    df_sub <- df_sub[order(df_sub$Importance, decreasing = TRUE), ]
-    return(paste(df_sub$TF, collapse = ", "))
-  })
-)
-
-
-result_df$Num_Targets_Per_TF <- sapply(strsplit(result_df$TFs, ","), length)
-result_df2 <- result_df[order(result_df$Num_Targets_Per_TF, decreasing = TRUE), ]
-result_df2$Type <- rep("Targetting", nrow(result_df2))
-
-targets<-result_df1$TF
-targetting<-result_df2$Target
-result_vector <- targetting[!targetting %in% targets]
-
-out <- paste(sQuote(result_vector, FALSE), collapse=", ")
-cat(out)
-
-
-final<-c(targets,result_vector)
-out <- paste(sQuote(final, FALSE), collapse=", ")
-cat(out)
-
-###binding both dataframes
-colnames(result_df2) <- colnames(result_df1)
-concatenated_df <- rbind(result_df1, result_df2)
-
-
-library(ggplot2)
-concatenated_df$TF<-factor(concatenated_df$TF,levels = final)
-ggplot(concatenated_df, aes(x=TF, y=Num_TFs_Per_Target, fill=Type))+
-  geom_bar(stat="identity", position="dodge")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,color = 'black',size=12),axis.text.y = element_text(color = 'black',size=20))+scale_fill_manual(values=c('#4B0082','grey60'))+
+ggplot(combined_df, aes(x = TF, y = Num_TFs_Per_Target, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c('#4B0082', 'grey60')) +
+  theme_minimal() +
   theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, color = 'black', size = 12),
+    axis.text.y = element_text(color = 'black', size = 12),
     panel.background = element_rect(fill = "white"),
     plot.background = element_rect(fill = "white")
   )
 
+### Bottom Panel: Heatmap of Subnetwork A TF–Target coexpression
+heatmap_data <- full2 %>% filter(TF %in% k[[1]], target %in% k[[1]])
 
+# Focus on most connected TFs
+top_TFs <- rev(c("IRF8", "IRF1", "NFKB1", "HIC1", "RELB", "NFKB2", "STAT1"))
+heatmap_data <- heatmap_data %>%
+  filter(TF %in% top_TFs) %>%
+  mutate(importance_score = log(importance))
 
-
-
-
-
-
-
-
-
-
-
-
-
-#######heatmap of GRNBoost2 coexpression values in Subnetwork A
-full2<-subset(full, full$weight>10)
-subset_df <- full2[full2$v1 %in% k[[1]], ]
-subset_df2 <- subset_df[subset_df$v2 %in% k[[1]], ]
-
-heatmap_data<-subset_df2
-###selecting only the regulon with the most targets
-allowed_TF_values <- c("IRF8", "IRF1",'NFKB1','HIC1','RELB','NFKB2','STAT1')
-allowed_TF_values <- rev(allowed_TF_values)
-
-heatmap_data$importance_score <- log(heatmap_data$importance_score)
-heatmap_data <- heatmap_data[heatmap_data$TF %in% allowed_TF_values, ]
-
-heatmap_data$TF <- factor(heatmap_data$TF, levels = allowed_TF_values)
+heatmap_data$TF <- factor(heatmap_data$TF, levels = top_TFs)
 heatmap_data$target <- factor(heatmap_data$target, levels = unique(heatmap_data$target))
 
-length(unique(heatmap_data$target))
-
-heatmap_matrix <- spread(heatmap_data, key = "target", value = "importance_score") %>%
-  column_to_rownames(var = "TF") %>%
+heatmap_matrix <- spread(heatmap_data, key = target, value = importance_score) %>%
+  column_to_rownames("TF") %>%
   as.matrix()
 
-u<-melt(heatmap_matrix)
+melted_matrix <- melt(heatmap_matrix)
+colnames(melted_matrix) <- c("TF", "target", "importance_score")
 
-colnames(u)<-c('TF','target','importance_score')
-
-
-#Heatmap construction
-heatmap_plot <- ggplot(u, aes(x = TF, y = target, fill = importance_score)) +
-  geom_tile(color='white',size=1.5) +
-  scale_fill_viridis(option = 'magma',na.value = "grey95") +  
-  labs(title = "TF-Target Interaction Heatmap") +
-  theme(panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        panel.background = element_rect(fill = "white"))+theme(axis.text.x = element_text(angle=90))+
-  theme(axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_text(angle = 90, size = 12, hjust=1,vjust=0.5,color = 'black'),axis.text.y = element_text(size = 12,color = 'black'))+
+heatmap_plot <- ggplot(melted_matrix, aes(x = TF, y = target, fill = importance_score)) +
+  geom_tile(color = "white", size = 1.5) +
+  scale_fill_viridis(option = "magma", na.value = "grey95") +
+  labs(title = "TF–Target Interaction Heatmap") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, size = 12, hjust = 1, color = 'black'),
+    axis.text.y = element_text(size = 12, color = 'black'),
+    panel.background = element_rect(fill = "white")
+  ) +
   coord_flip()
+
 heatmap_plot
-
-
-
-
-#######all three graphical components were stitched together manually
