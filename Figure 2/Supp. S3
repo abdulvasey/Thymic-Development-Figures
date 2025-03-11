@@ -1,106 +1,128 @@
-library(tidyverse)
-library(Seurat)
-library (viridis)
-library(ggrastr)
-library(RColorBrewer)
+# Load libraries
+library(dplyr)
+library(readr)
+library(stringr)
 library(igraph)
 library(ggplot2)
-library(dplyr)
-library(igraph)
+library(ggnetwork)
+library(ggrepel)
 
-####all adjacencies from GRNboost2 ouput of SCENIC
-adj<-read.csv("hori_adj.csv")
-####adjacencies from Fig 2C. Part 1 containing adjacencies found in enriched motifs
-edges <- read.csv("edge_all_check.csv", header =FALSE)
+# hori_reg.csv contains enriched motifs and target genes from SCENIC run of all fetal epithelial cells.
+motif_data <- read_csv("hori_reg.csv") %>%
+  rename(TF = 1, target_column = 9) %>%
+  slice(-c(1, 2))
 
+motif_df <- motif_data[, c("TF", "target_column")]
 
+# Extract gene names from target column
+motif_df$target_column <- lapply(motif_df$target_column, function(x) {
+  str_extract_all(x, "(?<=\\(')[^']+(?=',)")[[1]]
+})
 
-#####adding GRNBoost2 importance score to adj df
-adj$id <- paste(adj$TF,adj$target)
-edges$id<- paste(edges$V1,edges$V2)
+# Group by TF and remove duplicate targets
+grouped_targets <- motif_df %>%
+  group_by(TF) %>%
+  summarise(targets = list(unique(unlist(target_column))))
 
-full<-inner_join(adj, edges, by = "id") 
+# Create edge list of TF–TF connections
+tf_list <- grouped_targets$TF
+source_tfs <- c()
+target_tfs <- c()
 
-full = subset(full, select = -c(id,V1,V2) )
-colnames(full) <- c("v1", "v2","weight")
-edges<-full
-edges <- as.matrix(edges)
-
-###setting minimum coexpression value threshold for matrix
-full2<-subset(full, full$weight>10)
-
-
-
-edges<-full2
-edges <- as.matrix(edges)
-
-##igraph setup
-library(igraph)
-b<-graph_from_data_frame(edges,directed = FALSE)
-is_weighted(b)
-#leiden clustering of network
-z <- cluster_leiden(b,weights = NULL,objective_function = "modularity", resolution = 1,n_iterations=1000)
-communities(z)
-set.seed(123)
-
-plot(z,b,vertex.size = 10,vertex.label.cex	= 0.4, edge.width = 0.1,vertex.label.font = 2,vertex.shape = "circle",vertex.label.family = "Arial", edge.color = "black",vertex.label.color = "black")
-###saving cluster identities
-k<-communities(z)
-
-###reordering list of clusters
-new_order <- c(3, 7, 6, 5,4,2,1)
-
-# Rearrange the list
-k <- k[new_order]
-
-names(k) <- seq_along(k)
-
-
-
-library (ggplot2)
-library (ggnetwork)
-library (igraph)
-set.seed(175)
-set.seed(325)
-
-##converting igraph into ggnetwork
-y2<- ggnetwork(b,igraph::layout_with_fr(b))
-
-
-
-###adding cluster identity to each gene
-new = c()
-for (val in y2$name){
-  for (x in c(1:7)){
-    if (val %in% k[[x]]){
-      new <- append (new,as.character(x))
-    }
-  } 
+for (tf in tf_list) {
+  tf_targets <- grouped_targets$targets[grouped_targets$TF == tf][[1]]
+  linked_tfs <- tf_targets[tf_targets %in% tf_list & tf_targets != tf]
+  if (length(linked_tfs) > 0) {
+    source_tfs <- c(source_tfs, rep(tf, length(linked_tfs)))
+    target_tfs <- c(target_tfs, linked_tfs)
+  }
 }
 
-y2$leid <- new
+edge_df <- data.frame(TF = source_tfs, target = target_tfs, stringsAsFactors = FALSE)
+
+# Load GRNBoost2 adjacency matric from the same SCENIC run and merge
+grnboost_adj <- read.csv("hori_adj.csv")
+grnboost_adj$edge_id <- paste(grnboost_adj$TF, grnboost_adj$target)
+edge_df$edge_id <- paste(edge_df$TF, edge_df$target)
+
+merged_edges <- inner_join(grnboost_adj, edge_df, by = "edge_id") %>%
+  select(TF.x, target.x, importance) %>%
+  setNames(c("TF", "target", "weight"))
+
+# Filter by coexpression score threshold
+filtered_edges <- merged_edges %>% filter(weight > 10)
+
+# Build graph
+tf_graph <- graph_from_data_frame(filtered_edges, directed = FALSE)
+
+# --- Leiden clustering and raw igraph plot (your original section) ---
+z <- cluster_leiden(tf_graph, weights = NULL, objective_function = "modularity", resolution = 1, n_iterations = 1000)
+communities(z)
+
 set.seed(123)
+plot(
+  z, tf_graph,
+  vertex.size = 10,
+  vertex.label.cex = 0.4,
+  edge.width = 0.1,
+  vertex.label.font = 2,
+  vertex.shape = "circle",
+  vertex.label.family = "Arial",
+  edge.color = "black",
+  vertex.label.color = "black"
+)
 
+k <- communities(z)
 
+# Reorder cluster membership list
+cluster_order <- c(3, 7, 6, 5, 4, 2, 1)
+k <- k[cluster_order]
+names(k) <- seq_along(k)
 
-#network colors
-rhg_colors <- c("#990000", "#006600", "#000099", "#999900", "#339999", "#990099", "#000000")
+# Convert graph to ggnetwork layout
+set.seed(325)
+network_layout <- ggnetwork(tf_graph, layout = igraph::layout_with_fr(tf_graph))
 
+# Assign cluster to each node
+network_layout$cluster <- sapply(network_layout$name, function(node) {
+  for (i in seq_along(k)) {
+    if (node %in% k[[i]]) return(as.character(i))
+  }
+  return(NA)
+})
 
+# Handle missing weights and log-transform
+network_layout$weight[is.na(network_layout$weight)] <- 10
+network_layout$weight <- log(as.numeric(network_layout$weight))
 
-###scaling adjacency weight values
-a<-y2$weight
-a<-as.numeric(a)
-a<-log(a)
-y2$weight<-a
+# Define cluster colors
+cluster_colors <- c("#990000", "#006600", "#000099", "#999900", "#339999", "#990099", "#000000")
 
-set.seed(123)
+# Define gene pattern and highlight list
+pattern <- "^(STAT|IRF|NFKB|CXCL|TNF|IL|HIVE)"
+all_nodes <- unique(network_layout$name)
+inflammatory_genes <- all_nodes[grepl(pattern, all_nodes)]
 
+manual_genes <- c("IRF1", "IRF3", "IRF7", "IRF8", "IRF9", 
+                  "STAT1", "STAT2", "STAT3", "STAT5A", "STAT6", 
+                  "NFKB1", "NFKB2", "REL", "RELA", "RELB", 
+                  "HIVEP1", "BHLHE40")
 
-#####selecting labeled genes for each cluster
-plt<-ggplot(y2, aes(x = x, y = y, xend = xend, yend = yend)) +
-  geom_edges(color="black",size=1,aes(alpha=(weight))) +
-  geom_nodes(aes(color = leid), size = 0.3)+
-  geom_nodelabel_repel(aes(color = leid,label = name),
-                       size = 3,data = y2, max.overlaps = Inf,force=8,min.segment.length=0)+scale_colour_manual(values = rhg_colors) + theme_blank()
-plt
+highlight_genes <- unique(c(inflammatory_genes, manual_genes))
+
+# Final network plot
+set.seed(126)
+network_plot <- ggplot(network_layout, aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_edges(color = "black", size = 0.3, aes(alpha = weight)) +
+  geom_nodes(aes(color = cluster), size = 1) +
+  geom_nodelabel_repel(
+    data = network_layout,
+    aes(label = name, color = cluster,
+        fontface = ifelse(name %in% highlight_genes, "bold", "plain")),
+    size = 3, max.overlaps = Inf, force = 8, min.segment.length = 0
+  ) +
+  scale_colour_manual(values = cluster_colors) +
+  theme_void()
+
+# Display plot
+network_plot
