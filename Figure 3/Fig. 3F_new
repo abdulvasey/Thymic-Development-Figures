@@ -1,0 +1,120 @@
+### Load Required Libraries
+library(tidyverse)
+library(Seurat)
+library(SingleCellExperiment)
+library(slingshot)
+library(tradeSeq)
+library(cowplot)
+library(ggrastr)
+library(DelayedMatrixStats)
+library(RColorBrewer)
+library(viridis)
+library(SCORPIUS)
+library(zoo)
+library(pheatmap)
+library(reshape2)
+library(ggrepel)
+library(clusterProfiler)
+library(enrichplot)
+library(ggnewscale)
+
+### Load Seurat Object and Metadata
+srt <- readRDS("all_red.epi.from.individual.overall.int.rds")
+meta <- read_csv("horizontal_meta.csv")
+
+### Merge Metadata and Annotate
+srt@meta.data <- srt@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select(-contains("cellType")) %>%
+  left_join(meta %>% select(barcode, cellType), by = "barcode") %>%
+  mutate(
+    tissue = case_when(
+      samptype == "TEC" ~ "T",
+      samptype == "EEC" ~ "E",
+      samptype == "BEC" ~ "B",
+      samptype == "LEC" ~ "L"
+    ),
+    group_label = str_glue("{cellType} {tissue}")
+  ) %>%
+  column_to_rownames("barcode")
+
+Idents(srt) <- "group_label"
+
+### Rename & Order Clusters
+srt <- RenameIdents(srt,
+  `Bud Tip Progenitor L` = "BTP L",
+  `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L",
+  `Bud Tip Progenitor B` = "BTP B"
+)
+
+tec <- c("mcTEC T", "cTEC T", "mTECI T", "mTECII T", "mTECIII/IV T", "TECneuro T", "TECmyo T")
+lec <- c("BTP L", "BTP Adjacent L", "Multiciliated L", "Secretory L", "Epithelial Basal L", "Neuroendocrine L")
+bec <- c("Epithelial Basal B", "Club B", "Goblet B", "Submucosal Gland B", "Secretory B", "Multiciliated B", "BTP B")
+eec <- c("Epithelial Basal E", "Suprabasal E", "Multiciliated E", "Gastric Epithelial E")
+ord <- c(tec, bec, lec, eec)
+
+srt@active.ident <- factor(srt@active.ident, levels = ord)
+
+### Optional: Final Cleanup Names (if desired later)
+# new.cluster.ids <- ord
+# names(new.cluster.ids) <- levels(srt)
+# srt <- RenameIdents(srt, new.cluster.ids)
+# srt@active.ident <- factor(srt@active.ident, levels = ord)
+
+### Subset Relevant Clusters
+sub <- subset(srt, idents = c("mcTEC T", "cTEC T", "mTECI T", "mTECII T", "Epi. Basal B", "BTP L", "Epi. Basal E"))
+
+### Load Gene Sets (GMT)
+read_gmt <- function(path) {
+  tibble(line = read_lines(path)) %>%
+    separate(line, into = c("pathway", "url", "genes"), sep = "\t", extra = "merge") %>%
+    select(-url) %>%
+    mutate(genes = str_split(genes, "\t")) %>%
+    unnest(genes)
+}
+
+version <- "7.5"
+gmt_path <- str_glue("https://data.broadinstitute.org/gsea-msigdb/msigdb/release/{version}/c2.cp.v{version}.symbols.gmt")
+pathway_key <- read_gmt(gmt_path)
+
+### Define Plot Color Scheme
+color_key <- c('#FFA07A', 'darkred', '#E6AB02', "#D95F02", "#7570B3", "darkgreen", "maroon")
+
+### IFN-Gamma Signaling Module Score + Violin Plot
+pathway1 <- "REACTOME_INTERFERON_GAMMA_SIGNALING"
+genes <- pathway_key %>% filter(pathway == pathway1) %>% pull(genes)
+
+sub <- AddModuleScore(sub, assay = "RNA", features = list(genes), name = "gamma")
+
+plt <- VlnPlot(sub, features = "gamma1", pt.size = 0, cols = color_key, combine = FALSE)
+plt <- plt[[1]] +
+  stat_summary(fun = mean, geom = "point") +
+  NoLegend() +
+  ggtitle(pathway1) +
+  xlab("") +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(size = 12)
+  )
+plt
+
+### IFN-Alpha/Beta Signaling Module Score + Violin Plot
+pathway2 <- "REACTOME_INTERFERON_ALPHA_BETA_SIGNALING"
+genes <- pathway_key %>% filter(pathway == pathway2) %>% pull(genes)
+
+sub <- AddModuleScore(sub, assay = "RNA", features = list(genes), name = "ab")
+
+plt2 <- VlnPlot(sub, features = "ab1", pt.size = 0, cols = color_key, combine = FALSE)
+plt2 <- plt2[[1]] +
+  stat_summary(fun = mean, geom = "point") +
+  NoLegend() +
+  ggtitle(pathway2) +
+  xlab("") +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(size = 12)
+  )
+plt2
+
