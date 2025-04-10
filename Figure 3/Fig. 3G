@@ -135,9 +135,7 @@ merge <- AddModuleScore(merge, list(genes_ab), name = "ab")
 Idents(merge) <- 'Type'
 
 
-######################################################
-# 7. Spatial Plots with Custom Aspect Ratio Calculation
-######################################################
+###aspect ratio calculation to display plots without distortion
 
 # Calculate aspect ratio for 'pn' sample
 pn_coords <- as.data.frame(pn@images$slice1@boundaries[["centroids"]]@coords)
