@@ -1,0 +1,48 @@
+library(Seurat)
+library(tidyverse)
+
+## Dataframe containing medullary subcluster frequencies across major developmental timepoints: embryonic, fetal, and postnatal.
+## The "Total" column denotes the total number of cells captured at each respective timepoint.
+df <- data.frame(
+  Freq = c(75, 139, 70, 155, 21, 47, 118, 5, 91, 34, 66, 7, 64, 94, 1, 1, 17, 37, 63, 48, 287, 200, 68, 27),
+  CellType = c("Neuroendocrine-Like", "Muscle-Like", "Post-AIRE mTECIII/IV", "mTECII AIRE High", "Ionocyte",
+               "mTECII AIRE Low Cy", "mTECII AIRE Low", "Ciliated", "Post-AIRE mTECIII/IV", "Neuroendocrine-Like",
+               "mTECII AIRE High", "Ionocyte", "mTECII AIRE Low Cy", "mTECII AIRE Low", "Ciliated", "Muscle-Like",
+               "Ciliated", "Ionocyte", "Muscle-Like", "Neuroendocrine-Like", "Post-AIRE mTECIII/IV", 
+               "mTECII AIRE High", "mTECII AIRE Low", "mTECII AIRE Low Cy"),
+  Gestational.Age = c(rep("16,17,18 Weeks", 8), rep("6,7 Weeks", 8), rep("3,10 Month", 8)),
+  Total = c(rep(7466, 8), rep(8804, 8), rep(3255, 8)),
+  Percentage = c(1.005, 1.862, 0.938, 2.076, 0.281, 0.630, 1.580, 0.067,
+                 1.034, 0.386, 0.750, 0.080, 0.727, 1.068, 0.011, 0.011,
+                 0.522, 1.137, 1.935, 1.475, 8.817, 6.144, 2.089, 0.829)
+)
+
+ordered_vector <- c(
+  "mTECII AIRE Low",      
+  "mTECII AIRE Low Cy",    
+  "mTECII AIRE High",     
+  "Post-AIRE mTECIII/IV",  
+  "Neuroendocrine-Like",  
+  "Muscle-Like",           
+  "Ionocyte",               
+  "Ciliated"                
+)
+
+
+## plot construction
+plt_new <- df %>% 
+  mutate(Gestational.Age = factor(Gestational.Age, levels = 
+                                    rev(c("6,7 Weeks","16,17,18 Weeks","3,10 Month")))) %>%
+  mutate(CellType = factor(CellType, levels = 
+                             rev(ordered_vector))) %>% 
+  ggplot(aes(x = CellType, y=Percentage, fill = Gestational.Age)) + 
+  geom_bar(stat = "identity", position = "fill", color= "black") +
+  scale_fill_manual(values=rev(c("#FFDAD1", "#FF9E8A", "#8E0000"))) + 
+  scale_y_discrete(expand = c(0,0))+
+  scale_x_discrete(expand = c(0,0))+
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,size=12,color='black'),axis.text.y = element_text(size=12,color='black'),
+        plot.margin = unit(c(2,1,1,1), "lines")) +
+  labs(x = "", y = "Percentage of Cluster Frequency across Time", fill = "")
+plt<-plt_new+coord_flip()
+plt
