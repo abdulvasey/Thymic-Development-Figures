@@ -300,3 +300,6 @@ srt <- RunSVD(srt)
 srt <- RunUMAP(object = srt, reduction = 'lsi', dims = 2:30)
 srt <- FindNeighbors(object = srt, reduction = 'lsi', dims = 2:30)
 srt <- FindClusters(object = srt, verbose = FALSE, algorithm = 3)
+
+#save object
+saveRDS(srt,'ATAC.RDS')
