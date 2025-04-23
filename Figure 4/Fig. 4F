@@ -1,0 +1,70 @@
+library (DESeq2)
+library(tidyverse)
+library(readxl)
+library(Seurat)
+library(patchwork)
+
+#load data for DEseq2
+#df is count matrix from bulkRNAseq alignment
+df<-read_tsv('/Users/avymohd/Documents/BULKseq_analysis/Primary Sorted TEC/salmon.merged.gene_counts_length_scaled.tsv')
+meta<-read_excel('/Users/avymohd/Documents/BULKseq_analysis/Primary Sorted TEC/meta.xlsx')
+df<-as.data.frame(df)
+
+
+# tabulating all transcript variant counts under gene name
+# ex. HLA-DRA + HLA-DRA_1 + HLA-DRA_2 = HLA_DRA
+df$Gene_Name <- sub("_.*", "", df$gene_id)
+
+df <- df %>%
+  group_by(Gene_Name) %>%
+  summarise(across(-starts_with("gene", ignore.case = TRUE), sum), .groups = "drop") %>%
+  as.data.frame()
+
+
+rownames(df) <- df$Gene_Name
+df <- df[, -1]
+
+# Round counts to integers
+df <- round(df)
+
+# Create DESeq2 object
+dds <- DESeqDataSetFromMatrix(countData = df,
+                              colData = meta,
+                              design = ~ Type)
+dds <- DESeq(dds)
+
+genes <- c('IFNG', 'IFNA2', 'IFNL1')  
+
+# Initialize an empty list to store the plots
+
+plot_list <- list()
+
+# loop to generate list of plots
+for (gene in genes) {
+  # Get the plot data for the current gene
+  d <- plotCounts(dds, gene=gene, intgroup="Type", returnData=TRUE)
+  d$Type <- factor(d$Type, levels=c("cTEC","mTEC Lo","mTEC Hi","Thymocytes","B Cells","mDC",'pDC'))
+  
+  # Generate the plot
+  plt <- ggplot(d, aes(x = Type, y = count, color = Type)) +
+    geom_point(position=position_jitter(w = 0.1, h = 0), size=6) +
+    theme_minimal() + 
+    scale_color_manual(values = c('darkred','#E6AB02',"#D95F02","black","darkblue",'#E75480','purple')) +
+    ggtitle(gene) +
+    theme(plot.title = element_text(hjust = 0.5), axis.text = element_text(size = 12, color = 'black'),
+          legend.text = element_text(size = 12), text = element_text(size=12, color = 'black')) +
+    theme(axis.title.x = element_blank(), axis.title.y = element_blank()) +
+    NoLegend() +
+    labs(y="Normalized Counts") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(size = 13, color='black', angle=45, hjust = 1), 
+          axis.title.x = element_blank(), axis.text.y = element_text(size = 13, color='black')) +
+    theme(plot.title = element_text(size=13))+NoLegend()
+  
+  # Save each plot in the list with the gene name as the key
+  plot_list[[gene]] <- plt
+}
+
+
+plot_grid <- wrap_plots(plot_list, ncol = 4)
+plot_grid
