@@ -1,65 +1,93 @@
-library(tidyverse)
 library(Seurat)
-library(biomaRt)
-library (dplyr)
-library(tidyverse)
-library(Seurat)
-library(biomaRt)
-library (dplyr)
-library(tidyverse)
-library(Seurat)
-library(tSpace)
-library(umap)
-library(SCopeLoomR)
-library(tidyverse)
-library(Seurat)
-library(biomaRt)
-library (dplyr)
 library(ggplot2)
-library(patchwork)
+library(dplyr)
 
-###Seurat of thymic epithelial cells from all stages
+
+# Load Seurat object and metadata
 srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
 meta <- read_csv("vertical_metadata.csv")
 
+# Add metadata to srt
 srt@meta.data <- srt@meta.data %>% 
   rownames_to_column("barcode") %>% 
-  dplyr::select(barcode:age) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
-  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+  select(barcode:age) %>% 
+  left_join(meta %>% select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo","10mo"))) %>%
   column_to_rownames("barcode")
 
-
-
+# Set identities to cell types
 srt <- SetIdent(srt, value = srt@meta.data$cellType)
-srt<-subset(srt,idents = c("mcTEC","mTEC 1","cTEC","mTEC 2",'Cycling TEC'))
+
+# Reorder and rename cluster identities
+ord <- c("Cycling TEC", "mcTEC", "cTEC", "mTEC 1", "mTEC 2", "mTEC 3/4", "TEC myo/neuro", "Parathyroid")
+Idents(srt) <- 'cellType'
+srt@active.ident <- factor(srt@active.ident, levels = ord)
+new.cluster.ids <- c("Cycling TEC", "mcTEC", "cTEC", "mTECI", "mTECII", "mTECIII/IV", "TEC myo/neuro", "Parathyroid")
+names(new.cluster.ids) <- levels(srt)
+srt <- RenameIdents(srt, new.cluster.ids)
 
 
-ra_metabolism_select <- c("CYP26A1", "CYP26B1", "CYP26C1")
-srt <- AddModuleScore(srt, assay = "RNA", list(ra_metabolism_select), name = "ab")
 
-j<-VlnPlot(srt,features = "ab1",combine=FALSE)
-q<-j[[1]]$data
-df_grp = q %>% group_by(ident)  %>%
-  summarise(Average_Module_Score = mean(ab1),
-            sd = sd(ab1),
-            .groups = 'drop')
+#### cellType_macro includes cellType and macro age data (embryonic, fetal, and postnatal stages) ex: cTEC_16_17_18w
+Idents(srt)<-'cellType_macro'
+unique = unique(srt@active.ident)
+u<- as.character(unique)
+lev<-sort(u)
 
 
-df2 <- df_grp %>%
-  separate(ident, into = c("type", "time"), sep = "_") %>%
-  mutate(
-    type = case_when(
-      type == "mTEC 1" ~ "mTECI",
-      type == "mTEC 2" ~ "mTECII",
-      TRUE ~ type
+
+plots <- list()
+
+
+##core thymic epithelial TFs
+features<-c("FOXN1", "PAX1", "FOXG1", "HOXA3")
+
+
+for (feature in features) {
+  # Generate the violin plot and extract the data
+  j <- VlnPlot(srt, features = feature, combine = FALSE)
+  q <- j[[1]]$data
+  
+  # Group by 'ident' and calculate the mean and standard deviation 
+  df_grp <- q %>%
+    group_by(ident) %>%
+    summarise(Average_Expression = mean(.data[[feature]], na.rm = TRUE),
+              sd = sd(.data[[feature]], na.rm = TRUE),
+              .groups = 'drop')
+  
+  df2 <- df_grp %>%
+    separate(ident, into = c("type", "time"), sep = "__") %>%
+    mutate(
+      type = case_when(
+        type == "mTEC 1" ~ "mTECI",
+        type == "mTEC 2" ~ "mTECII",
+        TRUE ~ type
+      )
     )
-  )
+  
+  # Prepare the data frame for plotting
+  df <- df2
+  df$time <- factor(df$time, levels = c("6_7w", "16_17_18w", "3_10_pn"))
+  df$type <- factor(df$type, levels = c('cTEC', 'mTECI', 'mTECII'))
+  
+  # Generate the plot
+  plt <- ggplot(df, aes(x = time, y = Average_Expression, group = type, colour = type)) + 
+    ggtitle(feature) +
+    geom_line(size = 1) + 
+    theme_minimal() + labs(y=NULL)+
+    theme(axis.text = element_text(size = 12, color = 'black')) +
+    theme(axis.text.y = element_text(size = 8, color = 'black')) +
+    theme(axis.text.x = element_text(size = 12, color = 'black',angle = 45,hjust = 1)) +
+    scale_color_manual(values = c('#DEA200' , '#7E549F' ,  '#99B898')) + 
+    #scale_x_discrete(labels = c("Embryonic", "Fetal", "Postnatal")) + 
+    theme(axis.title.x = element_blank()) + ylim(0,NA)+NoLegend()+
+    scale_x_discrete(labels = c("Emb.", "Fet.", "PN."),expand = c(0, 0))
+  
+  
+  # Store the plot in the list
+  plots[[feature]] <- plt
+}
 
-df<-df2
-df$time<-factor(df$time,levels=c("6w","7w","16w","17w","18w","3mo"))
-df$type<-factor(df$type,levels=c('Cycling TEC','mcTEC','cTEC','mTECI','mTECII'))
-plt1<-ggplot(df, aes(x = time, y = Average_Module_Score, group = type,colour = type)) + ggtitle("RA Degradation")+
-  geom_line(size=1.5) + theme_minimal() + theme(axis.text = element_text(size = 12,color = 'black')) +scale_color_manual(values=c('#FB836F' , '#C1549C','#DEA200' , '#7E549F' ,  '#99B898')) + scale_x_discrete(labels=c("PCW 6", "PCW 7", "PCW 16","PCW 17", "PCW 18","PNM 3"))+theme(axis.title.x=element_blank()) 
-plt1[["plot_env"]][["srt"]]<-NULL
-plt1
+
+#display using patchwork
+combined_plot<-wrap_plots(plots,ncol = 2)
