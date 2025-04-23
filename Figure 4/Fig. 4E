@@ -2,7 +2,8 @@ library(DESeq2)
 library(tidyverse)
 library(readxl)
 
-# Load count matrix and metadata for DESeq2
+# load data for DEseq2
+# df is count matrix from bulkRNAseq alignment
 df <- read_tsv('/Users/avymohd/Documents/BULKseq_analysis/AFG_organs_redo/count_matrix.tsv')
 df <- as.data.frame(df)
 meta <- read.csv('/Users/avymohd/Documents/BULKseq_analysis/AFG_organs_redo/meta.csv')
