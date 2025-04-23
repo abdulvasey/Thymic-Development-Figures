@@ -1,58 +1,102 @@
 library(Seurat)
 library(tidyverse)
-library(ggrepel)
-library(ggplot2)
+library(biomaRt)
+library(tSpace)
+library(umap)
+library(SCopeLoomR)
+library(patchwork)
 
-###Seurat of thymic epithelial cells from all stages
+
+
+# Load vertical seurat
 srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
 meta <- read_csv("vertical_metadata.csv")
 
-srt@meta.data <- srt@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  dplyr::select(barcode:age) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
-  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+# add metadata
+srt@meta.data <- srt@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select(barcode:age) %>%
+  left_join(meta %>% select(barcode, cellType, type_age, macro, cellType_macro)) %>%
+  mutate(age = factor(age, levels = c("6w", "7w", "16w", "17w", "18w", "3mo", "10mo"))) %>%
   column_to_rownames("barcode")
+
 
 srt <- SetIdent(srt, value = srt@meta.data$cellType)
 
-##renaming clusters
-ord<-c("Cycling TEC","mcTEC",'cTEC',"mTEC 1",'mTEC 2','mTEC 3/4','TEC myo/neuro',"Parathyroid")
-Idents(srt)<-'cellType'
-srt@active.ident<-factor(srt@active.ident,levels=ord)
-new.cluster.ids <- c("Cycling TEC","mcTEC",'cTEC',"mTECI",'mTECII','mTECIII/IV','TEC myo/neuro',"Parathyroid")
+# Rename and order cluster identities 
+cluster_order <- c("Cycling TEC", "mcTEC", "cTEC", "mTEC 1", "mTEC 2", "mTEC 3/4", "TEC myo/neuro", "Parathyroid")
+Idents(srt) <- 'cellType'
+srt@active.ident <- factor(srt@active.ident, levels = cluster_order)
+
+new.cluster.ids <- c("Cycling TEC", "mcTEC", "cTEC", "mTECI", "mTECII", "mTECIII/IV", "TEC myo/neuro", "Parathyroid")
 names(new.cluster.ids) <- levels(srt)
 srt <- RenameIdents(srt, new.cluster.ids)
 
-srt@active.ident<-factor(srt@active.ident, levels=rev(new.cluster.ids))
+# subset seurat
+srt <- SetIdent(srt, value = srt@meta.data$cellType2)
+srt <- subset(srt, idents = c("mTECI", "cTEC", "mTECII"))
+DefaultAssay(srt) <- "RNA"
 
 
-###Retinoic Acid gene modules
-ra_synthesis_select <- c("ADH4", "RDH10", "RDH11", "RDH14", "ALDH1A1", "ALDH1A2", "ALDH1A3",
-                         "SDR16C5", "DHRS3", "DHRS4", "DHRS9", "DLD", "PDHA1", "PDHB",
-                         "PDK1", "PDK2", "PDK3", "PDK4", "PLAT", "AKR1C3", "PDHX", "STRA6") %>% sort()
-ra_nuclear_select <- c("FABP5", "RARA", "RARB", "RXRA", "RXRB", "PPARD", "RORA", "CRABP1", 
-                       "CRABP2") %>% sort()
-ra_metabolism_select <- c("CYP26A1", "CYP26B1", "CYP26C1")
+
+# Load pathway gene sets 
 
 
-srt <- AddModuleScore(srt, assay = "RNA", list(ra_synthesis_select), name = "RA_synthesis_module")
-srt <- AddModuleScore(srt, assay = "RNA", list(ra_nuclear_select), name = "RA_nuclear_module")
-srt <- AddModuleScore(srt, assay = "RNA", list(ra_metabolism_select), name = "RA_degredation_module")
+read_gmt <- function(path) {
+  tibble(line = read_lines(path)) %>%
+    separate(line, into = c("pathway", "url", "genes"), sep = "\t", extra = "merge") %>%
+    select(-url) %>%
+    mutate(genes = str_split(genes, "\t")) %>%
+    unnest(genes)
+}
+
+version <- "7.5"
+gmt_path <- str_glue("https://data.broadinstitute.org/gsea-msigdb/msigdb/release/{version}/c2.cp.v{version}.symbols.gmt")
+pathway_key <- read_gmt(gmt_path)
 
 
-cols = c('#FB836F' , '#C1549C','#DEA200' , '#7E549F' ,  '#99B898','navyblue','#E84A5F','grey25')
-plt1<-VlnPlot(srt,features = c("RA_synthesis_module1"),cols = cols, pt.size = 0,combine = FALSE)
-plt1<-plt1[[1]] * stat_summary(fun.y = mean, geom = "point")+
-  ggtitle("RA Synthesis")+theme_minimal()+NoLegend()+ theme(axis.text.x= element_text(size = 12,color='black',angle=45,hjust = 1)) + theme(axis.text.y= element_text(size = 12,color='black'),axis.title.x = element_blank())+labs(y="Module Score")
-plt1 
+# Create identity with timepoint 
+srt@meta.data$type_age <- paste0(srt@meta.data$cellType2, "_", srt@meta.data$age)
+Idents(srt) <- 'type_age'
+srt@active.ident <- factor(srt@active.ident, levels = sort(unique(as.character(srt@active.ident))))
 
-plt2<-VlnPlot(srt,features = c("RA_nuclear_module1"),cols = cols, pt.size = 0,combine = FALSE)
-plt2<-plt2[[1]] * stat_summary(fun.y = mean, geom = "point")+
-  ggtitle("RA Nuclear")+theme_minimal()+NoLegend()+ theme(axis.text.x= element_text(size = 12,color='black',angle=45,hjust = 1)) + theme(axis.text.y= element_text(size = 12,color='black'),axis.title.x = element_blank())+labs(y="Module Score")
-plt2
+# Add module scores
+get_module_plot_data <- function(pathway_name, plot_title) {
+  genes <- pathway_key %>% filter(pathway == pathway_name) %>% pull(genes)
+  srt <<- AddModuleScore(srt, assay = "RNA", list(genes), name = "score")
+  
+  vln_data <- VlnPlot(srt, features = "score1", combine = FALSE)[[1]]$data
+  df <- vln_data %>%
+    group_by(ident) %>%
+    summarise(Average_Module_Score = mean(score1), sd = sd(score1), .groups = 'drop') %>%
+    separate(ident, into = c("type", "time"), sep = "_") %>%
+    mutate(
+      type = case_when(
+        type == "mTEC 1" ~ "mTECI",
+        type == "mTEC 2" ~ "mTECII",
+        TRUE ~ type
+      ),
+      time = factor(time, levels = c("6w", "7w", "16w", "17w", "18w", "3mo", "10mo")),
+      type = factor(type, levels = c("cTEC", "mTECI", "mTECII"))
+    )
+  
+  ggplot(df, aes(x = time, y = Average_Module_Score, group = type, colour = type)) +
+    ggtitle(plot_title) +
+    geom_line(size = 1.7) +
+    theme_minimal() +
+    theme(
+      axis.text = element_text(size = 12, color = 'black'),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.title.x = element_blank(),
+      axis.text.y = element_text(size = 12, color = 'black')
+    ) +
+    scale_color_manual(values = c('#DEA200', '#7E549F', '#99B898')) +
+    scale_x_discrete(labels = c("PCW 6", "PCW 7", "PCW 16", "PCW 17", "PCW 18", "PNM 3", "PNM 10")) +
+    NoLegend()
+}
 
-plt3<-VlnPlot(srt,features = c("RA_degredation_module1"),cols = cols, pt.size = 0,y.max = 1,combine = FALSE)
-plt3<-plt3[[1]] * stat_summary(fun.y = mean, geom = "point")+
-  ggtitle("RA Degradation")+theme_minimal()+NoLegend()+ theme(axis.text.x= element_text(size = 12,color='black',angle=45,hjust = 1)) + theme(axis.text.y= element_text(size = 12,color='black'),axis.title.x = element_blank())+labs(y="Module Score")
-plt3
+# Plot IFN Alpha/Beta and IFN Gamma signaling
+plt1 <- get_module_plot_data("REACTOME_INTERFERON_ALPHA_BETA_SIGNALING", "Type-I Interferon Signaling") + labs(y = NULL)
+plt2 <- get_module_plot_data("REACTOME_INTERFERON_GAMMA_SIGNALING", "Type-II Interferon Signaling") + labs(y = NULL)
+
+
