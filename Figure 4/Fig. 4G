@@ -1,0 +1,87 @@
+library(Seurat)
+library(tidyverse)
+library(dplyr)
+
+# Load Seurat object and metadata
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+# Add metadata to srt
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  select(barcode:age) %>% 
+  left_join(meta %>% select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo","10mo"))) %>%
+  column_to_rownames("barcode")
+
+# Set identities to cell types
+srt <- SetIdent(srt, value = srt@meta.data$cellType)
+
+# Reorder and rename cluster identities
+ord <- c("Cycling TEC", "mcTEC", "cTEC", "mTEC 1", "mTEC 2", "mTEC 3/4", "TEC myo/neuro", "Parathyroid")
+Idents(srt) <- 'cellType'
+srt@active.ident <- factor(srt@active.ident, levels = ord)
+new.cluster.ids <- c("Cycling TEC", "mcTEC", "cTEC", "mTECI", "mTECII", "mTECIII/IV", "TEC myo/neuro", "Parathyroid")
+names(new.cluster.ids) <- levels(srt)
+srt <- RenameIdents(srt, new.cluster.ids)
+
+## subsetting parathyroid/late medullary clusters
+sub<-subset(srt,idents = c('mTECII','mTECIII/IV','Parathyroid','TEC myo/neuro'))
+
+### SCT integration
+### macro columns denotes general age of samples (embryonic, fetal, and postnatal)
+ifnb.list <- SplitObject(sub, split.by = "macro")
+ifnb.list <- lapply(X = ifnb.list, FUN = SCTransform)
+features <- SelectIntegrationFeatures(object.list = ifnb.list, nfeatures = 3000)
+ifnb.list <- PrepSCTIntegration(object.list = ifnb.list, anchor.features = features)
+immune.anchors <- FindIntegrationAnchors(object.list = ifnb.list, normalization.method = "SCT",anchor.features = features)
+immune.combined.sct <- IntegrateData(anchorset = immune.anchors, normalization.method = "SCT")
+
+DefaultAssay(immune.combined.sct) <- "integrated"
+immune.combined.sct <- RunPCA(immune.combined.sct, verbose = FALSE)
+immune.combined.sct <- RunUMAP(immune.combined.sct, reduction = "pca",dims = 1:30)
+#immune.combined.sct <- RunTSNE(immune.combined.sct, reduction = "pca",dims = 1:50)
+immune.combined.sct <- FindNeighbors(immune.combined.sct, reduction = "pca", dims = 1:30)
+immune.combined.sct <- FindClusters(immune.combined.sct, reduction = "pca", dims = 1:30,resolution = 2)
+
+
+### defining new clusters (medullary subclusters) and adding to srt metadata
+df <- data.frame(
+  integrated_snn_res.2 = c(5, 0, 10, 3, 1, 16, 8, 7, 4, 9, 13, 11, 14, 6, 12, 2, 15),
+  new_idents = c(
+    "mTECII AIRE Low Cy",
+    "mTECII AIRE Low",
+    "mTECII AIRE High",
+    "mTECII AIRE High",
+    "mTECII AIRE High",
+    "mTECII AIRE High",
+    "Post-AIRE mTECIII/IV",
+    "Post-AIRE mTECIII/IV",
+    "Post-AIRE mTECIII/IV",
+    "Post-AIRE mTECIII/IV",
+    "Ionocyte",
+    "Parathyroid",
+    "cTEC",
+    "Muscle-Like",
+    "Muscle-Like",
+    "Neuroendocrine-Like",
+    "Ciliated"
+  )
+)
+
+srt <- immune.combined.sct
+meta <- srt@meta.data
+
+meta$integrated_snn_res.2 <- as.character(meta$integrated_snn_res.2)
+df$integrated_snn_res.2 <- as.character(df$integrated_snn_res.2)
+
+meta_annotated <- left_join(meta, df, by = "integrated_snn_res.2")
+rownames(meta_annotated) <- meta_annotated$barcode
+
+srt@meta.data <- meta_annotated
+
+
+## Plot cells labeled by medullary subclusters
+Idents(srt)<-'new_idents'
+
+DimPlot(srt)
