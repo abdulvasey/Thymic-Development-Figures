@@ -1,0 +1,103 @@
+####Stankiewicz et al. scRNAseq dataset integration/annotation
+
+library(Seurat)
+library(tidyverse)
+
+# Base directory where your data is located
+base_dir <- "/10xMultiome_2024/Rossi_Thymus"
+
+# Metadata mapping
+metadata <- data.frame(
+  Folder = c("GSM8223087_T087_mRNA", "GSM8223089_T096_mRNA", 
+             "GSM8223091_T097_mRNA", "GSM8223093_T098_mRNA", 
+             "GSM8223095_T099_mRNA", "GSM8223097_T100_mRNA"),
+  SRR_Folder = c("SRR28773623", "SRR28773621", "SRR28773619", 
+                 "SRR28773617", "SRR28773615", "SRR28773613"),
+  stringsAsFactors = FALSE
+)
+
+# Initialize an empty list to store Seurat objects, using folder names as keys
+seurat_objects <- list()
+
+# Loop through each row in the metadata
+for (i in 1:nrow(metadata)) {
+  folder <- metadata$Folder[i]
+  srr_folder <- metadata$SRR_Folder[i]
+  
+  # Construct the file path
+  file_path <- file.path(base_dir, folder, "hg38", srr_folder, "filtered_feature_bc_matrix.h5")
+  
+  if (file.exists(file_path)) {
+    message("Loading file for: ", folder)
+    
+    # Read the 10x data
+    data <- Read10X_h5(file_path)
+    
+    # Create a Seurat object and set orig.ident to the folder name
+    seurat_obj <- CreateSeuratObject(counts = data, project = folder)
+    seurat_obj$orig.ident <- folder  # Assign folder name as orig.ident
+    
+    # Add the Seurat object to the list using the folder name as the key
+    seurat_objects[[folder]] <- seurat_obj
+  } else {
+    message("File not found: ", file_path)
+  }
+}
+
+# Merge all Seurat objects using folder names for add.cell.ids
+combined_seurat <- merge(
+  x = seurat_objects[[1]], 
+  y = seurat_objects[-1], 
+  add.cell.ids = names(seurat_objects), 
+  project = "Combined_Seurat"
+)
+
+obj<-combined_seurat
+
+obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
+
+
+## QC
+obj <- subset(obj, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 7.5 & nCount_RNA < 30000)
+
+# Visualize QC metrics as a violin plot
+VlnPlot(obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,pt.size = 0)
+obj <- NormalizeData(obj)
+obj <- FindVariableFeatures(obj)
+obj <- ScaleData(obj)
+obj <- RunPCA(obj)
+obj <- RunUMAP(obj,dims = 1:30)
+
+
+
+options(future.globals.maxSize = 10 * 1024^3)  # Increase to 8 GiB
+
+
+## Integration via Seurat v5
+obj <- IntegrateLayers(
+  object = obj, method = RPCAIntegration,
+  orig.reduction = "pca", new.reduction = "integrated.rpca",
+  verbose = FALSE
+)
+obj <- FindNeighbors(obj, reduction = "integrated.rpca", dims = 1:30)
+obj <- FindClusters(obj, resolution = 3, cluster.name = "rpca_clusters")
+
+obj <- RunUMAP(obj, reduction = "integrated.rpca", dims = 1:20, reduction.name = "umap.cca")
+
+srt <- obj
+
+### Annotate epithelial clusters
+
+srt <- RenameIdents(srt,
+                    '27' = 'cTEC',
+                    '23' = 'mcTEC',
+                    '16' = 'mcTEC',
+                    '13' = 'mcTEC',
+                    '18' = 'mcTEC',
+                    '20' = 'mTECI',
+                    '14' = 'mTECI',
+                    '58' = 'mTECII',
+                    '45' = 'TECmyo/neuro',
+                    '53' = 'TECmyo/neuro'
+)
+
