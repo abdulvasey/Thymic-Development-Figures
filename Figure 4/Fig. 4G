@@ -84,4 +84,19 @@ srt@meta.data <- meta_annotated
 ## Plot cells labeled by medullary subclusters
 Idents(srt)<-'new_idents'
 
+# removing a small cTEC cluster and Parathyroid from integration
+srt<-subset(srt,idents = c('cTEC','Parathyroid'),invert=T)
+
+levels=c("mTECII AIRE Low",        # Lower expression level
+         "mTECII AIRE Low Cy",     # Slightly higher or different condition of Low
+         "mTECII AIRE High",       # Higher expression level
+         "Post-AIRE mTECIII/IV",   # Post-AIRE stage
+         "Neuroendocrine-Like",    # "Like" type 1
+         "Muscle-Like",            # "Like" type 2
+         "Ionocyte",               # Distinct cell type
+         "Ciliated")                # Distinct cell type
+srt@active.ident<-factor(srt@active.ident,levels=levels)
+
+plt<-DimPlot(srt,reduction='umap',label = T,combine=FALSE,cols = c("#FFCB3E","#b1b67b","#026835","#7663a0","darkblue","#D95F02","#4E7D96", "#AB4F76"),pt.size = 0.6)
+
 DimPlot(srt)
