@@ -33,7 +33,7 @@ names(new.cluster.ids) <- levels(srt)
 srt <- RenameIdents(srt, new.cluster.ids)
 
 # subset seurat
-srt <- SetIdent(srt, value = srt@meta.data$cellType2)
+srt <- SetIdent(srt, value = srt@meta.data$cellType)
 srt <- subset(srt, idents = c("mTECI", "cTEC", "mTECII"))
 DefaultAssay(srt) <- "RNA"
 
@@ -56,7 +56,7 @@ pathway_key <- read_gmt(gmt_path)
 
 
 # Create identity with timepoint 
-srt@meta.data$type_age <- paste0(srt@meta.data$cellType2, "_", srt@meta.data$age)
+srt@meta.data$type_age <- paste0(srt@meta.data$cellType, "_", srt@meta.data$age)
 Idents(srt) <- 'type_age'
 srt@active.ident <- factor(srt@active.ident, levels = sort(unique(as.character(srt@active.ident))))
 
