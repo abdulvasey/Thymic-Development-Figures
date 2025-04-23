@@ -1,0 +1,63 @@
+library(Seurat)
+library(tidyverse)
+library(ggplot2)
+library(pheatmap)
+library(cowplot)
+library(dplyr)
+library(biomaRt)
+library(ggrepel)
+library(ggnetwork)
+
+# Load Seurat object and metadata
+srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
+meta <- read_csv("vertical_metadata.csv")
+
+# Add metadata to srt
+srt@meta.data <- srt@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  select(barcode:age) %>% 
+  left_join(meta %>% select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo","10mo"))) %>%
+  column_to_rownames("barcode")
+
+# Set identities to cell types
+srt <- SetIdent(srt, value = srt@meta.data$cellType)
+
+# Reorder and rename cluster identities
+ord <- c("Cycling TEC", "mcTEC", "cTEC", "mTEC 1", "mTEC 2", "mTEC 3/4", "TEC myo/neuro", "Parathyroid")
+Idents(srt) <- 'cellType'
+srt@active.ident <- factor(srt@active.ident, levels = ord)
+new.cluster.ids <- c("Cycling TEC", "mcTEC", "cTEC", "mTECI", "mTECII", "mTECIII/IV", "TEC myo/neuro", "Parathyroid")
+names(new.cluster.ids) <- levels(srt)
+srt <- RenameIdents(srt, new.cluster.ids)
+
+# UMAP plot (Fig. 4A)
+cols <- c('#FB836F', '#C1549C', '#DEA200', '#7E549F', '#99B898', 'navyblue', '#E84A5F', 'grey25')
+p <- DimPlot(srt, pt.size = 0.5, shuffle = TRUE, cols = cols) + NoLegend() + NoAxes()
+
+p
+
+# Bar plot of cell type proportions by age (Fig. 4B)
+df <- read_csv("vertical_metadata.csv")
+
+plt_bar <- df %>%
+  filter(cellType != "Parathyroid", cellType != "TEC myo/neuro") %>%
+  count(age, cellType) %>%
+  mutate(age = factor(age, levels = rev(c("6w","7w","16w","17w","18w","3mo","10mo")))) %>%
+  mutate(cellType = factor(cellType, levels = c('mTEC 3/4','mTEC 2','mTEC 1','cTEC','mcTEC','Cycling TEC'))) %>%
+  ggplot(aes(x = age, y = n, fill = cellType)) +
+  geom_bar(stat = "identity", position = "fill", color = "black") +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_y_discrete(expand = c(0,0)) +
+  scale_x_discrete(expand = c(0,0)) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(hjust = 1, size = 12, color = 'black'),
+    plot.margin = unit(c(2,1,1,1), "lines"),
+    axis.title.y = element_text(size = 12, face = 'bold')
+  ) +
+  labs(x = "", y = "", fill = "") +
+  coord_flip() +
+  scale_fill_manual(values = rev(cols)) +
+  NoLegend() +
+  scale_x_discrete(labels = rev(c('PCW 6','PCW 7','PCW 16','PCW 17','PCW 18','PNM 3','PNM 10')))
