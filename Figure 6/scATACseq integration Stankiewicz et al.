@@ -1,0 +1,302 @@
+####Stankiewicz et al. scATACseq dataset integration
+library(Signac)
+library(Seurat)
+library(GenomicRanges)
+library(future)
+library(BSgenome.Hsapiens.UCSC.hg38)
+
+plan("multisession", workers = 4)
+options(future.globals.maxSize = 46000 * 1024^2) # for 50 Gb RAM
+
+
+# Read in peak sets
+peaks.080 <- read.table(
+  file = "/outs/SRR28774080/outs/peaks.bed",
+  col.names = c("chr", "start", "end")
+)
+peaks.082 <- read.table(
+  file = "/outs/SRR28774082/outs/peaks.bed",
+  col.names = c("chr", "start", "end")
+)
+peaks.081 <- read.table(
+  file = "/outs/SRR28774081/outs/peaks.bed",
+  col.names = c("chr", "start", "end")
+)
+peaks.079 <- read.table(
+  file = "/outs/SRR28774079/outs/peaks.bed",
+  col.names = c("chr", "start", "end")
+)
+peaks.083 <- read.table(
+  file = "/outs/SRR28774083/outs/peaks.bed",
+  col.names = c("chr", "start", "end")
+)
+peaks.078 <- read.table(
+  file = "/outs/SRR28774078/outs/peaks.bed",
+  col.names = c("chr", "start", "end")
+)
+
+# Convert to genomic ranges
+gr.080 <- makeGRangesFromDataFrame(peaks.080)
+gr.082 <- makeGRangesFromDataFrame(peaks.082)
+gr.081 <- makeGRangesFromDataFrame(peaks.081)
+gr.079 <- makeGRangesFromDataFrame(peaks.079)
+gr.083 <- makeGRangesFromDataFrame(peaks.083)
+gr.078 <- makeGRangesFromDataFrame(peaks.078)
+
+# Create a unified set of peaks to quantify in each dataset
+combined.peaks <- reduce(x = c(gr.080, gr.082, gr.081, gr.079, gr.083, gr.078))
+
+
+peakwidths <- width(combined.peaks)
+
+
+combined.peaks <- combined.peaks[peakwidths  < 10000 & peakwidths > 20]
+combined.peaks
+
+
+
+
+
+
+
+# Load metadata
+md.080 <- read.table(
+  file = "/outs/SRR28774080/outs/singlecell.csv",
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+)[-1, ] # remove the first row
+
+md.082 <- read.table(
+  file = "/outs/SRR28774082/outs/singlecell.csv",
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+)[-1, ]
+
+md.081 <- read.table(
+  file = "/outs/SRR28774081/outs/singlecell.csv",
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+)[-1, ]
+
+md.079 <- read.table(
+  file = "/outs/SRR28774079/outs/singlecell.csv",
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+)[-1, ]
+
+md.083 <- read.table(
+  file = "/outs/SRR28774083/outs/singlecell.csv",
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+)[-1, ]
+
+md.078 <- read.table(
+  file = "/outs/SRR28774078/outs/singlecell.csv",
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+)[-1, ]
+
+
+
+
+# Perform an initial filtering of low count cells
+md.080 <- md.080[md.080$passed_filters > 500, ]
+md.082 <- md.082[md.082$passed_filters > 500, ]
+md.081 <- md.081[md.081$passed_filters > 500, ]
+md.079 <- md.079[md.079$passed_filters > 500, ]
+md.083 <- md.083[md.083$passed_filters > 500, ]
+md.078 <- md.078[md.078$passed_filters > 500, ] # Adjust this threshold as needed
+
+# Create fragment objects
+library(Signac) # Ensure this library is loaded for CreateFragmentObject
+
+frags.080 <- CreateFragmentObject(
+  path = "/outs/SRR28774080/outs/fragments.tsv.gz",
+  cells = rownames(md.080)
+)
+
+frags.082 <- CreateFragmentObject(
+  path = "/outs/SRR28774082/outs/fragments.tsv.gz",
+  cells = rownames(md.082)
+)
+
+frags.081 <- CreateFragmentObject(
+  path = "/outs/SRR28774081/outs/fragments.tsv.gz",
+  cells = rownames(md.081)
+)
+
+frags.079 <- CreateFragmentObject(
+  path = "/outs/SRR28774079/outs/fragments.tsv.gz",
+  cells = rownames(md.079)
+)
+
+frags.083 <- CreateFragmentObject(
+  path = "/outs/SRR28774083/outs/fragments.tsv.gz",
+  cells = rownames(md.083)
+)
+
+frags.078 <- CreateFragmentObject(
+  path = "/outs/SRR28774078/outs/fragments.tsv.gz",
+  cells = rownames(md.078)
+)
+
+
+
+#################
+# Feature matrix for SRR28774080
+SRR28774080.counts <- FeatureMatrix(
+  fragments = frags.080,
+  features = combined.peaks,
+  cells = rownames(md.080)
+)
+
+# Feature matrix for SRR28774082
+SRR28774082.counts <- FeatureMatrix(
+  fragments = frags.082,
+  features = combined.peaks,
+  cells = rownames(md.082)
+)
+
+# Feature matrix for SRR28774081
+SRR28774081.counts <- FeatureMatrix(
+  fragments = frags.081,
+  features = combined.peaks,
+  cells = rownames(md.081)
+)
+
+# Feature matrix for SRR28774079
+SRR28774079.counts <- FeatureMatrix(
+  fragments = frags.079,
+  features = combined.peaks,
+  cells = rownames(md.079)
+)
+
+# Feature matrix for SRR28774083
+SRR28774083.counts <- FeatureMatrix(
+  fragments = frags.083,
+  features = combined.peaks,
+  cells = rownames(md.083)
+)
+
+# Feature matrix for SRR28774078
+SRR28774078.counts <- FeatureMatrix(
+  fragments = frags.078,
+  features = combined.peaks,
+  cells = rownames(md.078)
+)
+
+
+
+
+
+
+# SRR28774080
+SRR28774080_assay <- CreateChromatinAssay(SRR28774080.counts, fragments = frags.080)
+SRR28774080 <- CreateSeuratObject(SRR28774080_assay, assay = "ATAC", meta.data = md.080)
+
+# SRR28774082
+SRR28774082_assay <- CreateChromatinAssay(SRR28774082.counts, fragments = frags.082)
+SRR28774082 <- CreateSeuratObject(SRR28774082_assay, assay = "ATAC", meta.data = md.082)
+
+# SRR28774081
+SRR28774081_assay <- CreateChromatinAssay(SRR28774081.counts, fragments = frags.081)
+SRR28774081 <- CreateSeuratObject(SRR28774081_assay, assay = "ATAC", meta.data = md.081)
+
+# SRR28774079
+SRR28774079_assay <- CreateChromatinAssay(SRR28774079.counts, fragments = frags.079)
+SRR28774079 <- CreateSeuratObject(SRR28774079_assay, assay = "ATAC", meta.data = md.079)
+
+# SRR28774083
+SRR28774083_assay <- CreateChromatinAssay(SRR28774083.counts, fragments = frags.083)
+SRR28774083 <- CreateSeuratObject(SRR28774083_assay, assay = "ATAC", meta.data = md.083)
+
+# SRR28774078
+SRR28774078_assay <- CreateChromatinAssay(SRR28774078.counts, fragments = frags.078)
+SRR28774078 <- CreateSeuratObject(SRR28774078_assay, assay = "ATAC", meta.data = md.078)
+
+
+
+
+# Add information to identify dataset of origin
+SRR28774080$dataset <- 'SRR28774080'
+SRR28774082$dataset <- 'SRR28774082'
+SRR28774081$dataset <- 'SRR28774081'
+SRR28774079$dataset <- 'SRR28774079'
+SRR28774083$dataset <- 'SRR28774083'
+SRR28774078$dataset <- 'SRR28774078'
+
+
+
+# Merge all datasets, adding a cell ID to make sure cell names are unique
+combined <- merge(
+  x = SRR28774080,
+  y = list(SRR28774082, SRR28774081, SRR28774079, SRR28774083, SRR28774078),
+  add.cell.ids = c("080", "082", "081", "079", "083", "078")
+)
+
+
+peaks.keep <- seqnames(granges(combined)) %in% standardChromosomes(granges(combined))
+combined <- combined[as.vector(peaks.keep), ]
+
+
+library(AnnotationHub)
+ah <- AnnotationHub()
+
+# Search for the Ensembl 98 EnsDb for Homo sapiens on AnnotationHub
+query(ah, "EnsDb.Hsapiens.v98")
+
+ensdb_v98 <- ah[["AH75011"]]
+
+
+plan("sequential")
+# extract gene annotations from EnsDb
+annotations <- GetGRangesFromEnsDb(ensdb = ensdb_v98)
+
+# change to UCSC style since the data was mapped to hg38
+seqlevels(annotations) <- paste0('chr', seqlevels(annotations))
+genome(annotations) <- "hg38"
+
+Annotation(combined) <- annotations
+
+### QC
+srt<-combined
+srt$pct_reads_in_peaks <- srt$peak_region_fragments / srt$passed_filters * 100
+DefaultAssay(srt)<-'ATAC'
+srt <- NucleosomeSignal(srt)
+
+srt$blacklist_ratio <- FractionCountsInRegion(
+  object = srt, 
+  assay = 'ATAC',
+  regions = blacklist_hg38_unified
+)
+
+srt<-subset(srt,peak_region_fragments>750 & peak_region_fragments<80000)
+srt<-subset(srt,pct_reads_in_peaks>50)
+srt<-subset(srt,blacklist_ratio<0.01)
+srt<-subset(srt,nucleosome_signal<1)
+
+srt <- TSSEnrichment(srt)
+srt<-subset(srt,TSS.enrichment>3)
+
+
+### clustering
+
+DefaultAssay(srt)<-'ATAC'
+srt <- RunTFIDF(srt,verbose = T)
+srt <- FindTopFeatures(srt, min.cutoff = 'q0')
+srt <- RunSVD(srt)
+srt <- RunUMAP(object = srt, reduction = 'lsi', dims = 2:30)
+srt <- FindNeighbors(object = srt, reduction = 'lsi', dims = 2:30)
+srt <- FindClusters(object = srt, verbose = FALSE, algorithm = 3)
