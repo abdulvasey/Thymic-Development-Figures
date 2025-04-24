@@ -5,7 +5,7 @@ library(Seurat)
 library(tSpace)
 library(umap)
 
-###Seurat of thymic epithelial cells from all stages
+###Seurat of thymic epithelial cells from all stages, PNM10 samples excluded
 srt <- readRDS("teconly.from.all.1.repca.reclust.int.rds")
 meta <- read_csv("vertical_metadata.csv")
 
