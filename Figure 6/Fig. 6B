@@ -1,0 +1,36 @@
+library(Signac)
+library(Seurat)
+library(GenomicRanges)
+library(future)
+
+##load annotated scATACseq object from 6A
+ATAC<-readRDS('ATAC_annot.RDS')
+
+##load integrated scRNAseq object (code to generate found in folder)
+RNA<-readRDS('RNA.RDS')
+
+## ATAC plot
+Idents(ATAC)<-'predicted.id'
+genes<-c('CCL2',"CCL25", "PRSS16", "PSMB11", "DLL4", "TBATA", "PGAM2", "LY75","CCL19", "EPCAM", "KRT5", "KRT15", "CXCL14","AIRE",'MYOG','NEUROD1')
+cell_types <- c("TECmyo/neuro", "mTECII", "mTECI", "cTEC", "mcTEC")
+ATAC<-subset(ATAC,idents = cell_types)
+
+ATAC@active.ident<-factor(ATAC@active.ident,levels=cell_types)
+## setting to Gene Activity Assay
+DefaultAssay(ATAC)<-'ACTIVITY'
+
+DotPlot(ATAC,assay = 'ACTIVITY',features = genes,cols = c('white','darkgreen')) + theme_minimal() +
+  theme(axis.text.x = element_text(angle=90, color='black', size = 12, hjust=1,vjust=0.5,face='italic'),axis.text.y = element_text(color='black', size = 12))+
+  theme(axis.title.x = element_blank(),axis.title.y = element_blank())
+
+## RNA plot
+genes<-c('CCL2',"CCL25", "PRSS16", "PSMB11", "DLL4", "TBATA", "PGAM2", "LY75","CCL19", "EPCAM", "KRT5", "KRT15", "CXCL14","AIRE",'MYOG','NEUROD1')
+cell_types <- c("TECmyo/neuro", "mTECII", "mTECI", "cTEC", "mcTEC")
+RNA<-subset(RNA,idents = cell_types)
+
+RNA@active.ident<-factor(RNA@active.ident,levels=cell_types)
+DefaultAssay(RNA)<-'RNA'
+
+DotPlot(RNA,assay = 'RNA',features = genes,cols = c('white','darkred')) + theme_minimal() +
+  theme(axis.text.x = element_text(angle=90, color='black', size = 12, hjust=1,vjust=0.5,face='italic'),axis.text.y = element_text(color='black', size = 12))+
+  theme(axis.title.x = element_blank(),axis.title.y = element_blank())
