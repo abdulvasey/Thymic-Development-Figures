@@ -6,7 +6,8 @@ library(RColorBrewer)
 library(pheatmap)
 library(gridExtra)
 
-# TPM: load, collapse to gene-level, filter low expression
+# TPM preprocessing, group_by step is to tabulate transcript variants under gene name
+# ex. GAPDH + GAPDH_1 = GAPDH
 tpm <- read_tsv("salmon.merged.gene_tpm.tsv") %>%
   select(-gene_name) %>%
   mutate(Gene_Name = sub("_.*", "", gene_id)) %>%
@@ -15,7 +16,7 @@ tpm <- read_tsv("salmon.merged.gene_tpm.tsv") %>%
   filter(if_any(-Gene_Name, ~ . >= 5)) %>%
   column_to_rownames('Gene_Name')
 
-# counts: load, collapse, round, match TPM
+# count preprocessing, filtering genes that meet TPM threshold
 df <- read_tsv("deseq2_star_salmon_length_scaled_counts.tsv") %>%
   mutate(Gene_Name = sub("_.*", "", gene_id)) %>%
   group_by(Gene_Name) %>%
@@ -112,5 +113,5 @@ plot_set <- function(set_name) {
 p2 <- plot_set('KEGG_PROTEASOME')
 p3 <- plot_set('KEGG_ANTIGEN_PROCESSING_AND_PRESENTATION')
 
-# combine and save
+# combined plot
 combined <- grid.arrange(p1[[4]], p2[[4]], p3[[4]], ncol = 3)
