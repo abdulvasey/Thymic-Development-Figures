@@ -1,0 +1,64 @@
+library(Signac)
+library(Seurat)
+library(GenomicRanges)
+library(future)
+
+##load integrated scATACseq object (code to generate found in folder)
+ATAC<-readRDS('ATAC.RDS')
+
+##load integrated scRNAseq object (code to generate found in folder)
+RNA<-readRDS('RNA.RDS')
+
+# quantify gene activity for ATAC
+gene.activities <- GeneActivity(ATAC, features = VariableFeatures(RNA))
+# add gene activities as a new assay
+ATAC[["ACTIVITY"]] <- CreateAssayObject(counts = gene.activities)
+
+# normalize gene activities
+DefaultAssay(ATAC) <- "ACTIVITY"
+ATAC <- NormalizeData(ATAC)
+ATAC <- ScaleData(ATAC, features = rownames(ATAC))
+# Identify anchors
+transfer.anchors <- FindTransferAnchors(reference = RNA, query = ATAC, features = VariableFeatures(object = RNA),
+                                        reference.assay = "RNA", query.assay = "ACTIVITY", reduction = "cca")
+
+## label transfer of 'cellType' from scRNAseq to scATACseq
+celltype.predictions <- TransferData(anchorset = transfer.anchors, refdata = RNA$cellType,
+                                     weight.reduction = ATAC[["lsi"]], dims = 2:30)
+
+ATAC <- AddMetaData(ATAC, metadata = celltype.predictions)
+
+## coembedding RNA and ATAC
+
+genes.use <- VariableFeatures(RNA)
+refdata <- GetAssayData(RNA, assay = "RNA", slot = "data")[genes.use, ]
+
+# refdata (input) contains a scRNA-seq expression matrix for the scRNA-seq cells.  imputation
+# (output) will contain an imputed scRNA-seq matrix for each of the ATAC cells
+imputation <- TransferData(anchorset = transfer.anchors, refdata = refdata, weight.reduction = ATAC[["lsi"]],
+                           dims = 2:30)
+ATAC[["RNA"]] <- imputation
+
+RNA$orig.ident<-'RNA'
+ATAC$orig.ident<-'ATAC'
+
+coembed <- merge(x = RNA, y = ATAC)
+
+# Finally, we run PCA and UMAP on this combined object, to visualize the co-embedding of both
+# datasets
+coembed <- ScaleData(coembed, features = genes.use, do.scale = FALSE)
+coembed <- RunPCA(coembed, features = genes.use, verbose = FALSE)
+coembed <- RunUMAP(coembed, dims = 1:30)
+
+
+
+##Fig. 6A
+cell_types <- c("TECmyo/neuro", "mTECII", "mTECI", "cTEC", "mcTEC")
+srt<-subset(coembed,idents = cell_types)
+
+cell_types <- c("TECmyo/neuro", "mTECII", "mTECI", "cTEC", "mcTEC")
+srt@active.ident<-factor(srt@active.ident,levels=rev(cell_types))
+plt<-DimPlot(srt,cols=c('#C1549C','#DEA200' , '#7E549F' ,  '#99B898','#E84A5F'))
+
+
+DimPlot(srt,cols = c('darkgreen','darkred'),group.by = 'method',shuffle = T,alpha = 0.8)
