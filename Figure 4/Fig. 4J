@@ -144,14 +144,14 @@ Idents(srt) <- "cellType3"
 ###### dotplot construction
 hla<-c('HLA-A', 'HLA-B', 'HLA-C','HLA-E' ,'HLA-F', 'HLA-DRA', 'HLA-DRB1', 'HLA-DRB5', 'HLA-DQA1', 'HLA-DQB1', 'HLA-DPA1', 'HLA-DPB1')
 levels=c("Cycling TEC","mcTEC",'cTEC',"mTECI",
-         "mTECII AIRE Low",        # Lower expression level
-         "mTECII AIRE Low Cy",     # Slightly higher or different condition of Low
-         "mTECII AIRE High",       # Higher expression level
-         "Post-AIRE mTECIII/IV",   # Post-AIRE stage
-         "Neuroendocrine-Like",    # "Like" type 1
-         "Muscle-Like",            # "Like" type 2
-         "Ionocyte",               # Distinct cell type
-         "Ciliated",'Parathyroid')                # Distinct cell type
+         "mTECII AIRE Low",        
+         "mTECII AIRE Low Cy",     
+         "mTECII AIRE High",       
+         "Post-AIRE mTECIII/IV",   
+         "Neuroendocrine-Like",   
+         "Muscle-Like",           
+         "Ionocyte",              
+         "Ciliated",'Parathyroid')               
 srt@active.ident<-factor(srt@active.ident,levels=rev(levels))
 
 
