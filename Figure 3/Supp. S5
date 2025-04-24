@@ -1,228 +1,206 @@
-library(tidyverse)
-library(Seurat)
-library(SingleCellExperiment)
-library(slingshot)
-library(tradeSeq)
-library(cowplot)
-library(ggrastr)
-library(DelayedMatrixStats)
-library (RColorBrewer)
-library(viridis)
-library(SCORPIUS)
-library(zoo)
-library(pheatmap)
-library(tradeSeq)
-library(reshape2)
-library(ggrepel)
+library(tidyverse)           # data manipulation + plotting
+library(Seurat)              # single-cell analysis
+library(SingleCellExperiment) # SCE object support
+library(slingshot)           # trajectory inference
+library(tradeSeq)            # differential expression along pseudotime
+library(cowplot)             # plot grids
+library(ggrastr)             # rasterised geoms
+library(DelayedMatrixStats)  # stats on DelayedMatrix objects
+library(RColorBrewer)        # color palettes
+library(viridis)             # color scales
+library(SCORPIUS)            # pseudotime analysis
+library(zoo)                 # rolling/window functions
+library(pheatmap)            # heatmaps
+library(reshape2)            # melt/cast data
+library(ggrepel)             # better text labels
 
-
-#####Seurat of all fetal epithelial cells
-srt <- readRDS("all_red.epi.from.individual.overall.int.rds")
-
-meta <-  read_csv("horizontal_meta.csv")
+##### Seurat of all fetal epithelial cells
+srt  <- readRDS("all_red.epi.from.individual.overall.int.rds")  # load Seurat object
+meta <- read_csv("horizontal_meta.csv")                        # load sample metadata
 
 srt@meta.data <- srt@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  select_at(vars(!contains("cellType"))) %>% 
-  left_join(meta %>% dplyr::select(barcode, cellType)) %>% 
-  mutate(tissue = case_when(
-    samptype == "TEC" ~ "T",
-    samptype == "EEC" ~ "E",
-    samptype == "BEC" ~ "B",
-    samptype == "LEC" ~ "L"
-  )) %>% 
-  mutate(group_label = str_glue("{cellType} {tissue}")) %>% 
-  column_to_rownames("barcode")
+  rownames_to_column("barcode") %>%                          # keep barcodes as column
+  select_at(vars(!contains("cellType"))) %>%                 # drop old cellType columns
+  left_join(meta %>% select(barcode, cellType), by="barcode") %>%  # add new cellType
+  mutate(
+    tissue = case_when(                                      # map sample types to letters
+      samptype == "TEC" ~ "T",
+      samptype == "EEC" ~ "E",
+      samptype == "BEC" ~ "B",
+      samptype == "LEC" ~ "L"
+    ),
+    group_label = str_glue("{cellType} {tissue}")            # combine into one label
+  ) %>% 
+  column_to_rownames("barcode")                             # restore rownames
+Idents(srt) <- 'group_label'                                # set active identity
 
-Idents(srt)<-'group_label'
+#### Renaming and ordering clusters
+srt <- RenameIdents(srt,                                    # shorten long names
+  `Bud Tip Progenitor L`          = "BTP L",
+  `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L",
+  `Bud Tip Progenitor B`          = "BTP B"
+)
+tec <- c('mcTEC T','cTEC T','mTECI T','mTECII T','mTECIII/IV T','TECneuro T','TECmyo T')
+lec <- c('BTP L','BTP Adjacent L','Multiciliated L','Secretory L','Epithelial Basal L','Neuroendocrine L')
+bec <- c('Epithelial Basal B','Club B','Goblet B','Submucosal Gland B','Secretory B','Multiciliated B','BTP B')
+eec <- c('Epithelial Basal E','Suprabasal E','Multiciliated E','Gastric Epithelial E')
+ord <- c(tec, bec, lec, eec)
+srt@active.ident <- factor(srt@active.ident, levels = ord)  # set factor order
 
-####renaming and ordering clusters
-srt <- RenameIdents(srt, `Bud Tip Progenitor L` = "BTP L")
-srt <- RenameIdents(srt, `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L")
-srt <- RenameIdents(srt, `Bud Tip Progenitor B` = "BTP B")
-tec<-c('mcTEC T','cTEC T', 'mTECI T',"mTECII T", 'mTECIII/IV T', 'TECneuro T', 'TECmyo T')
-lec<-c('BTP L', 'BTP Adjacent L', 'Multiciliated L', 'Secretory L', 'Epithelial Basal L', 'Neuroendocrine L')
-bec<-c('Epithelial Basal B','Club B', 'Goblet B', 'Submucosal Gland B', 'Secretory B','Multiciliated B','BTP B')
-eec<-c('Epithelial Basal E', 'Suprabasal E', 'Multiciliated E', 'Gastric Epithelial E')
-ord<-c(tec,bec,lec,eec)
-
-srt@active.ident<-factor(srt@active.ident,levels = ord)
-
-tec<-c('mcTEC T','cTEC T', 'mTECI T',"mTECII T", 'mTECIII/IV T', 'TECneuro T', 'TECmyo T')
-lec<-c('BTP L', 'BTP Adj. L', 'MC L', 'Sec. L', 'Epi. Basal L', 'NE L')
-bec<-c('Epi. Basal B','Club B', 'Goblet B', 'Submuc. B', 'Sec. B','MC B','BTP B')
-eec<-c('Epi. Basal E', 'Suprabasal E', 'MC E', 'Gastric E')
-ord<-c(tec,bec,lec,eec)
+tec <- c('mcTEC T','cTEC T','mTECI T','mTECII T','mTECIII/IV T','TECneuro T','TECmyo T')
+lec <- c('BTP L','BTP Adj. L','MC L','Sec. L','Epi. Basal L','NE L')
+bec <- c('Epi. Basal B','Club B','Goblet B','Submuc. B','Sec. B','MC B','BTP B')
+eec <- c('Epi. Basal E','Suprabasal E','MC E','Gastric E')
+ord <- c(tec, bec, lec, eec)
 new.cluster.ids <- ord
-names(new.cluster.ids) <- levels(srt)
-srt <- RenameIdents(srt, new.cluster.ids)
-srt@active.ident<-factor(srt@active.ident,levels = ord)
+names(new.cluster.ids) <- levels(srt)                       # map old -> new
+srt <- RenameIdents(srt, new.cluster.ids)                   # apply new labels
+srt@active.ident <- factor(srt@active.ident, levels = ord)  # re-order
 
-table(srt@active.ident)
+table(srt@active.ident)                                     # count cells per cluster
 
-#subsetting select epithelial cluster
-sub<-subset(srt,idents=c('mcTEC T','cTEC T','mTECI T','mTECII T','Epi. Basal B','BTP L','Epi. Basal E'))
+# Subsetting select epithelial clusters
+sub <- subset(srt, idents = c(
+  'mcTEC T','cTEC T','mTECI T','mTECII T','Epi. Basal B','BTP L','Epi. Basal E'
+))
 
-#####Differential markers
-marks<-FindAllMarkers(sub)
+##### Differential markers
+marks <- FindAllMarkers(sub)  # identify cluster markers
 
-
-
-
-####EMAP plot setup
-library(tidyverse)
-library(clusterProfiler)
-library(enrichplot)
-library(Seurat)
-library(cowplot)
-library(ggnewscale)
-library(ggrastr)
-library(viridis)
-library(dplyr)
-library(plyr)
-library(Seurat)
+#### EMAP plot setup
+library(clusterProfiler)     # enrichment analysis
+library(enrichplot)          # enrichment plotting
+library(ggnewscale)          # multiple scales in ggplot2
+library(plyr)                # misc helpers
 
 read_gmt <- function(path){
   tibble(line = read_lines(path)) %>% 
-    separate(line, into = c("pathway", "url", "genes"), sep = "\t", extra = "merge") %>% 
-    dplyr::select(-url) %>% 
+    separate(line, into = c("pathway","url","genes"), sep = "\t", extra="merge") %>% 
+    select(-url) %>% 
     mutate(genes = str_split(genes, "\t")) %>% 
-    unnest(genes)
+    unnest(genes)                                # long-format GMT
 }
 
-version <- "7.5"
-gmt_path <- str_glue("https://data.broadinstitute.org/gsea-msigdb/msigdb/release/{version}/c2.cp.v{version}.symbols.gmt")
-pathway_key <- read_gmt(gmt_path)
+version   <- "7.5"
+gmt_path  <- str_glue(
+  "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/{version}/c2.cp.v{version}.symbols.gmt"
+)
+pathway_key <- read_gmt(gmt_path)                  # load gene sets
 
-get_rank_list <- function(path, dge_type = "dge"){
-  if(dge_type == "cge"){
+get_rank_list <- function(path, dge_type="dge"){
+  if (dge_type == "cge"){
     df <- read_csv(path) %>% 
-      # filter(cell_group == cluster_filter) %>% 
-      dplyr::select(!contains(c("pct","max","min"))) %>% 
-      pivot_longer(!cell_group:gene, names_to = c("tissue","metric"), values_to="value", names_pattern = "(.{3})_(.*)") %>% 
-      pivot_wider(names_from = "metric", values_from = "value") %>% 
+      select(-contains(c("pct","max","min"))) %>% 
+      pivot_longer(!cell_group:gene, names_to=c("tissue","metric"),
+                   names_pattern="(.{3})_(.*)", values_to="value") %>% 
+      pivot_wider(names_from=metric, values_from=value) %>% 
       group_by(cell_group, gene) %>% 
-      summarise(
-        avg_log2FC = mean(avg_log2FC, na.rm = T), 
-        padj_max = max(p_val_adj, na.rm = T),
-        padj_min = min(p_val_adj, na.rm = T),
-        padj_avg = mean(p_val_adj, na.rm = T),
-      ) %>% 
+      summarise(avg_log2FC=mean(avg_log2FC, na.rm=TRUE),
+                padj_max=max(p_val_adj, na.rm=TRUE),
+                padj_min=min(p_val_adj, na.rm=TRUE),
+                padj_avg=mean(p_val_adj, na.rm=TRUE)) %>% 
       ungroup() %>% 
-      dplyr::select(cluster = cell_group, gene, avg_log2FC) %>% 
+      select(cluster=cell_group, gene, avg_log2FC) %>% 
       arrange(cluster, desc(avg_log2FC)) %>% 
-      group_by(cluster) %>% 
-      nest() %>% 
-      mutate(data = map(data, deframe)) %>% 
+      group_by(cluster) %>% nest() %>% 
+      mutate(data=map(data, deframe)) %>% 
       deframe()
-  }  
+  }
   if (dge_type == "dge"){
-    df <- read_csv(path) %>%  
-      # filter(cluster == cluster_filter) %>% 
-      dplyr::select(cluster, gene, avg_log2FC) %>% 
+    df <- read_csv(path) %>% 
+      select(cluster, gene, avg_log2FC) %>% 
       arrange(cluster, desc(avg_log2FC)) %>% 
-      group_by(cluster) %>% 
-      nest() %>% 
-      mutate(data = map(data, deframe)) %>% 
+      group_by(cluster) %>% nest() %>% 
+      mutate(data=map(data, deframe)) %>% 
       deframe()
   }
   return(df)
 }
 
-###path/marks.csv is csv of marks df from above
-cluster_genes_list <- get_rank_list(path= 'path/marks.csv', dge_type = "dge")
-
+# build ranked gene lists
+cluster_genes_list <- get_rank_list(path='path/marks.csv', dge_type="dge")
 
 set.seed(100)
 comp_result <- compareCluster(
   geneClusters = cluster_genes_list,
-  fun = "GSEA",
-  TERM2GENE = pathway_key,
+  fun          = "GSEA",
+  TERM2GENE    = pathway_key,
   pvalueCutoff = 0.01
-) %>%
-  pairwise_termsim()
+) %>% pairwise_termsim()
 
-
-
-# Network only overrepresented pathways
+# keep only strongly positive pathways
 comp_result_positive <- comp_result
 comp_result_positive@compareClusterResult <- comp_result_positive@compareClusterResult %>% 
-  filter(enrichmentScore > 0,NES>2.5)
+  filter(enrichmentScore > 0, NES > 2.5)
 
+# restrict to KEGG & REACTOME
+comp_result_positive@compareClusterResult <- 
+  comp_result_positive@compareClusterResult[grep("KEGG|REACTOME",
+    comp_result_positive@compareClusterResult$Description), ]
 
-
-# Selecting for only KEGG and REACTOME pathways
-comp_result_positive@compareClusterResult <- comp_result_positive@compareClusterResult[grep("KEGG|REACTOME", comp_result_positive@compareClusterResult$Description), ]
-
-#####upper panel EMAP plot (fully labeled)
+##### Upper-panel EMAP plot (fully labeled)
 n <- 4
 set.seed(210)
 pathway_network_full <- comp_result_positive %>% 
   pairwise_termsim() %>% 
-  emapplot(.,legend_n=4,showCategory = 10, cex_category = 1.5, cex_line = 0.5, layout = "fr", pie = "Count") + scale_fill_manual(values=c("darkgreen",'darkred','#7570B3','maroon',"#FFA07A",'#E6AB02',"#D95F02"))
+  emapplot(., legend_n=4, showCategory=10, cex_category=1.5,
+           cex_line=0.5, layout="fr", pie="Count") +
+  scale_fill_manual(values=c("darkgreen","darkred","#7570B3",
+                             "maroon","#FFA07A","#E6AB02","#D95F02"))
 set.seed(123)
-pathway_network_full
+pathway_network_full  # display network
 
+### Dotplot of encircled gene set nodes
+m <- comp_result_positive@compareClusterResult
+subset_df <- subset(m, select=c('Cluster',"ID",'core_enrichment'))
+result_df <- subset_df[subset_df$ID %in% q$name, ]  # filter by selected IDs
 
-
-
-
-
-
-
-###dotplot of encircled gene set nodes
-###isolating gene sets
-m<-comp_result_positive@compareClusterResult
-subset_df <- subset(m, select = c('Cluster',"ID",'core_enrichment'))
-result_df <- subset_df[subset_df$ID %in% q$name, ]
-
+# split core_enrichment strings
 result_df$core_enrichment2 <- strsplit(result_df$core_enrichment, "/")
 
+# define patterns to highlight
 highlight_pathway_patterns <- c(
-  'INTESTINAL',
-  'ASTHMA',
-  'THYROID',
-  'VERSUS_HOST',
-  'ALLOGRAFT',
-  'DIABETES',
-  'SECOND',
-  'MYOCARDITIS'
+  'INTESTINAL','ASTHMA','THYROID','VERSUS_HOST',
+  'ALLOGRAFT','DIABETES','SECOND','MYOCARDITIS'
 )
-highlight_pathways <- pathway_network_full$data %>% dplyr::select(name) %>% distinct() %>% filter(grepl(paste(highlight_pathway_patterns, collapse = "|"), name)) %>%  pull(name)
+# get names matching patterns
+highlight_pathways <- pathway_network_full$data %>%
+  select(name) %>% distinct() %>%
+  filter(grepl(paste(highlight_pathway_patterns, collapse="|"), name)) %>%
+  pull(name)
 
 result_df2 <- result_df[result_df$ID %in% highlight_pathways, ]
+gene_sets   <- result_df2$core_enrichment2
+result_df2$name <- paste(result_df2$Cluster, result_df2$ID, sep="_")
 
-gene_sets <- result_df2$core_enrichment2
-
-result_df2$name <- paste(result_df2$Cluster, result_df2$ID,sep = "_")
-
-gene_sets <- result_df2$core_enrichment2
-
-#common genes across selected gene sets
+# find common genes across sets
 intersection <- Reduce(intersect, gene_sets)
-plt_list<- list()
-elements_vector<-intersection
-for (x in 1:10) {
-  ########boldening text of common enriched genes across dotplots
-  all_genes<-(result_df2$core_enrichment2[x])[[1]]
-  print(all_genes)
-  result_vector <- character(length(all_genes))
-  for (i in seq_along(all_genes)) {
-    if (all_genes[i] %in% elements_vector) {
-      result_vector[i] <- 'bold.italic'
-    } else {
-      result_vector[i] <- 'italic'
-    }
-  }
-  ###### ggplot construction
-  plt<-DotPlot(sub, features = all_genes,assay = "RNA",cols = c('white','darkred')) + theme_minimal() + 
-    theme(axis.text.x = element_text(angle = 90, size = 10, hjust=1,vjust=0.5,color = 'black'),axis.text.y = element_text(size = 10, face = "italic",color = 'black'))+coord_flip()+xlab(label=result_df2$name[x])+
-    theme(axis.text.y = element_text(face = result_vector))+coord_flip()+ theme(axis.title.y=element_text(size=8),axis.title.x=element_blank())
-  ####plot formatting
-  plt[["guides"]][["colour"]][["title"]]<-'Avg. Exp.'
-  plt[["guides"]][["size"]][["title"]]<-'% Exp.'
-  plt[["guides"]][["size"]][["order"]]<-2
-  plt[["guides"]][["colour"]][["order"]]<-1
-  plt_list[[paste("plt_", x)]] <- plt
+
+plt_list <- list()
+elements_vector <- intersection
+
+for (x in seq_len(nrow(result_df2))) {
+  all_genes     <- result_df2$core_enrichment2[[x]]
+  result_vector <- ifelse(all_genes %in% elements_vector, 'bold.italic', 'italic')
+  
+  # build DotPlot for each gene set
+  plt <- DotPlot(sub, features=all_genes, assay="RNA", cols=c('white','darkred')) +
+    theme_minimal() +
+    theme(
+      axis.text.x=element_text(angle=90, size=10, hjust=1, vjust=0.5, color='black'),
+      axis.text.y=element_text(size=10, face=result_vector, color='black')
+    ) +
+    coord_flip() +
+    xlab(label=result_df2$name[x]) +
+    theme(axis.title.y=element_text(size=8), axis.title.x=element_blank())
+  
+  # adjust legends
+  plt[["guides"]][["colour"]][["title"]] <- 'Avg. Exp.'
+  plt[["guides"]][["size"]][["title"]]   <- '% Exp.'
+  plt[["guides"]][["size"]][["order"]]   <- 2
+  plt[["guides"]][["colour"]][["order"]] <- 1
+  
+  plt_list[[paste0("plt_", x)]] <- plt
 }
-plt
+
+plt_list  # list of dotplots
