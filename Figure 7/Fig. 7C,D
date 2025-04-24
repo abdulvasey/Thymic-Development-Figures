@@ -113,5 +113,7 @@ plot_set <- function(set_name) {
 p2 <- plot_set('KEGG_PROTEASOME')
 p3 <- plot_set('KEGG_ANTIGEN_PROCESSING_AND_PRESENTATION')
 
+# p1 is Fig. 7D
+# p2,3 are Fig. 7C
 # combined plot
 combined <- grid.arrange(p1[[4]], p2[[4]], p3[[4]], ncol = 3)
