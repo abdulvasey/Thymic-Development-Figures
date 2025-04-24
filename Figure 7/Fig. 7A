@@ -14,7 +14,7 @@ tpm <- read_tsv("…/salmon.merged.gene_tpm.tsv") %>%
   filter(if_any(-Gene_Name, ~ . >= 5)) %>%
   column_to_rownames("Gene_Name")
 
-# count preprocessing, 
+# count preprocessing, filtering genes that meet TPM threshold
 counts <- read_tsv("…/deseq2_star_salmon_length_scaled_counts.tsv") %>%
   mutate(Gene_Name = sub("_.*", "", gene_id)) %>%
   group_by(Gene_Name) %>%
