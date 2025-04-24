@@ -9,7 +9,7 @@ plan("multisession", workers = 4)
 options(future.globals.maxSize = 46000 * 1024^2) # for 50 Gb RAM
 
 
-# Read in peak sets
+# Read in peak sets (outs folder contains cellranger ATAC output of each sample)
 peaks.080 <- read.table(
   file = "/outs/SRR28774080/outs/peaks.bed",
   col.names = c("chr", "start", "end")
