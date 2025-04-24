@@ -101,6 +101,13 @@ srt <- RenameIdents(srt,
                     '53' = 'TECmyo/neuro'
 )
 
+##adding annotation to object metadata
+srt <- AddMetaData(
+  object = srt,
+  metadata = as.data.frame(Idents(srt)),
+  col.name = "cellType"
+)
+
 #save object
 saveRDS(srt,'RNA.RDS')
 
