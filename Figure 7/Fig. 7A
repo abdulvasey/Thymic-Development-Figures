@@ -1,1 +1,56 @@
-Hi
+library(DESeq2)
+library(tidyverse)
+library(readxl)
+library(limma)
+library(ggrepel)
+
+# TPM preprocessing, group_by step is to tabulate transcript variants under gene name
+# ex. GAPDH + GAPDH_1 = GAPDH
+tpm <- read_tsv("…/salmon.merged.gene_tpm.tsv") %>%
+  select(-gene_name) %>%
+  mutate(Gene_Name = sub("_.*", "", gene_id)) %>%
+  group_by(Gene_Name) %>%
+  summarise(across(starts_with("ZE"), sum), .groups = "drop") %>%
+  filter(if_any(-Gene_Name, ~ . >= 5)) %>%
+  column_to_rownames("Gene_Name")
+
+# count preprocessing, 
+counts <- read_tsv("…/deseq2_star_salmon_length_scaled_counts.tsv") %>%
+  mutate(Gene_Name = sub("_.*", "", gene_id)) %>%
+  group_by(Gene_Name) %>%
+  summarise(across(starts_with("ZE"), sum), .groups = "drop") %>%
+  column_to_rownames("Gene_Name") %>%
+  round() %>%
+  filter(rownames(.) %in% rownames(tpm))
+
+# sample metadata
+meta <- read_excel("…/meta.xlsx") %>%
+  mutate(Run = as.character(Run),
+         cond = factor(cond, levels = c("No IFN","IFNa","IFNg","IFNa + IFNg")))
+
+# DESeq2
+dds <- DESeqDataSetFromMatrix(countData = counts, colData = meta, design = ~ Run + cond)
+dds <- DESeq(dds)
+
+# transform & batch-correct
+vsd_mat       <- assay(vst(dds))
+vsd_corrected <- removeBatchEffect(vsd_mat, batch = meta$Run)
+
+# PCA on top 500 variable genes
+vars     <- rowVars(vsd_mat)
+top500   <- names(sort(vars, decreasing = TRUE))[1:500]
+pca      <- prcomp(t(vsd_corrected)[, top500])
+
+# prepare & plot PCA
+pca_df <- tibble(PC1 = pca$x[,1], PC2 = pca$x[,2], cond = meta$cond)
+labels <- pca_df %>% group_by(cond) %>% slice(1)
+cols   <- c("No IFN"="grey60","IFNa"="darkblue","IFNg"="#d4a017","IFNa + IFNg"="darkgreen")
+
+ggplot(pca_df, aes(PC1, PC2, color = cond)) +
+  geom_point(size = 3) +
+  geom_label_repel(data = labels, aes(label = cond)) +
+  scale_x_reverse() +
+  scale_color_manual(values = cols) +
+  labs("PCA of Batch-Corrected Counts") +
+  theme_minimal() +
+  coord_fixed()
