@@ -1,0 +1,72 @@
+# libraries
+library(DESeq2)
+library(tidyverse)
+library(readxl)
+library(patchwork)
+
+# TPM preprocessing, group_by step is to tabulate transcript variants under gene name
+# ex. GAPDH + GAPDH_1 = GAPDH
+tpm <- read_tsv('salmon.merged.gene_tpm.tsv') %>%
+  select(-gene_name) %>%
+  mutate(Gene_Name = sub("_.*", "", gene_id)) %>%
+  group_by(Gene_Name) %>%
+  summarise(across(starts_with("ZE"), sum), .groups = "drop") %>%
+  filter(if_any(-Gene_Name, ~ . >= 5)) %>%
+  column_to_rownames("Gene_Name")
+
+# count preprocessing, filtering genes that meet TPM threshold
+df <- read_tsv('deseq2_star_salmon_length_scaled_counts.tsv') %>%
+  mutate(Gene_Name = sub("_.*", "", gene_id)) %>%
+  group_by(Gene_Name) %>%
+  summarise(across(starts_with("ZE"), sum), .groups = "drop") %>%
+  column_to_rownames("Gene_Name") %>%
+  round() %>%
+  filter(rownames(.) %in% rownames(tpm))
+
+# sample metadata
+meta <- read_excel('meta.xlsx') %>%
+  mutate(
+    Run  = as.character(Run),
+    cond = factor(cond, levels = c("No IFN","IFNa","IFNg","IFNa + IFNg"))
+  )
+
+# DESeq2 fit
+dds <- DESeqDataSetFromMatrix(countData = df,
+                              colData   = meta,
+                              design    = ~ Run + cond) %>%
+  DESeq()
+
+# genes to plot
+elements <- c(
+  "CCL25","PSMB8","PSMB9","PSMB10","IRF8","IL15","IL15RA",
+  "FLT3LG","HLA-A","HLA-DRA","CD74","CD40","MX1","IRF7","IRF9","STAT1"
+)
+
+# build bar + jitter plots
+plot_list <- map(elements, function(gene) {
+  d <- plotCounts(dds, gene = gene, intgroup = "cond",
+                  normalized = TRUE, returnData = TRUE) %>%
+    mutate(cond = factor(cond, levels = levels(meta$cond)))
+  
+  ggplot(d, aes(cond, count, fill = cond)) +
+    geom_bar(stat = "summary", fun = "mean", color = "black", size = 0.3) +
+    geom_point(position = position_jitter(width = 0.1),
+               shape = 21, fill = "white", color = "black", size = 3, stroke = 0.5) +
+    scale_fill_manual(values = c(
+      "No IFN"       = "grey60",
+      "IFNa"         = "darkblue",
+      "IFNg"         = "#d4a017",
+      "IFNa + IFNg"  = "darkgreen"
+    )) +
+    theme_minimal() +
+    labs(title = gene, x = NULL, y = NULL) +
+    theme(
+      plot.title      = element_text(hjust = 0.5),
+      axis.text.x     = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    )
+})
+
+# arrange in 4 columns
+combined_plot <- wrap_plots(plot_list, ncol = 4)
+print(combined_plot)
