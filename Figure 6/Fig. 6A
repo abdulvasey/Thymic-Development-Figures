@@ -28,6 +28,9 @@ celltype.predictions <- TransferData(anchorset = transfer.anchors, refdata = RNA
 
 ATAC <- AddMetaData(ATAC, metadata = celltype.predictions)
 
+##saving annotated ATAC object
+saveRDS(ATAC,'ATAC_annot.RDS')
+
 ## coembedding RNA and ATAC
 
 genes.use <- VariableFeatures(RNA)
