@@ -1,0 +1,125 @@
+## Same code as Fig. 3C except with full list of genes visualized
+
+### Load Libraries
+library(tidyverse)
+library(Seurat)
+library(SingleCellExperiment)
+library(slingshot)
+library(tradeSeq)
+library(cowplot)
+library(ggrastr)
+library(DelayedMatrixStats)
+library(RColorBrewer)
+library(viridis)
+library(SCORPIUS)
+library(zoo)
+library(pheatmap)
+library(reshape2)
+library(ggrepel)
+library(clusterProfiler)
+library(enrichplot)
+library(ggnewscale)
+
+### Load Seurat Object and Metadata
+srt <- readRDS("all_red.epi.from.individual.overall.int.rds")
+meta <- read_csv("horizontal_meta.csv")
+
+### Merge Metadata and Annotate
+srt@meta.data <- srt@meta.data %>%
+  rownames_to_column("barcode") %>%
+  select(-contains("cellType")) %>%
+  left_join(meta %>% select(barcode, cellType), by = "barcode") %>%
+  mutate(
+    tissue = case_when(
+      samptype == "TEC" ~ "T",
+      samptype == "EEC" ~ "E",
+      samptype == "BEC" ~ "B",
+      samptype == "LEC" ~ "L"
+    ),
+    group_label = str_glue("{cellType} {tissue}")
+  ) %>%
+  column_to_rownames("barcode")
+
+Idents(srt) <- "group_label"
+
+### Rename Specific Clusters
+srt <- RenameIdents(srt,
+  `Bud Tip Progenitor L` = "BTP L",
+  `Bud Tip Progenitor Adjacent L` = "BTP Adjacent L",
+  `Bud Tip Progenitor B` = "BTP B"
+)
+
+### Define Cluster Order (Old and New)
+tec <- c("mcTEC T", "cTEC T", "mTECI T", "mTECII T", "mTECIII/IV T", "TECneuro T", "TECmyo T")
+lec <- c("BTP L", "BTP Adjacent L", "Multiciliated L", "Secretory L", "Epithelial Basal L", "Neuroendocrine L")
+bec <- c("Epithelial Basal B", "Club B", "Goblet B", "Submucosal Gland B", "Secretory B", "Multiciliated B", "BTP B")
+eec <- c("Epithelial Basal E", "Suprabasal E", "Multiciliated E", "Gastric Epithelial E")
+ord <- c(tec, bec, lec, eec)
+srt@active.ident <- factor(srt@active.ident, levels = ord)
+
+# Final Renaming (clean names for visualization)
+lec_new <- c("BTP L", "BTP Adj. L", "MC L", "Sec. L", "Epi. Basal L", "NE L")
+bec_new <- c("Epi. Basal B", "Club B", "Goblet B", "Submuc. B", "Sec. B", "MC B", "BTP B")
+eec_new <- c("Epi. Basal E", "Suprabasal E", "MC E", "Gastric E")
+ord <- c(tec, bec_new, lec_new, eec_new)
+
+new.cluster.ids <- ord
+names(new.cluster.ids) <- levels(srt)
+srt <- RenameIdents(srt, new.cluster.ids)
+srt@active.ident <- factor(srt@active.ident, levels = ord)
+
+### Show Final Cluster Table
+table(srt@active.ident)
+
+### Subset Relevant Epithelial Clusters
+sub <- subset(srt, idents = c("mcTEC T", "cTEC T", "mTECI T", "mTECII T", "Epi. Basal B", "BTP L", "Epi. Basal E"))
+
+### Load Gene Sets (.gmt)
+read_gmt <- function(path) {
+  tibble(line = read_lines(path)) %>%
+    separate(line, into = c("pathway", "url", "genes"), sep = "\t", extra = "merge") %>%
+    select(-url) %>%
+    mutate(genes = str_split(genes, "\t")) %>%
+    unnest(genes)
+}
+
+version <- "7.5"
+gmt_path <- str_glue("https://data.broadinstitute.org/gsea-msigdb/msigdb/release/{version}/c2.cp.v{version}.symbols.gmt")
+pathway_key <- read_gmt(gmt_path)
+
+### DotPlot Visualization Setup
+sub@active.ident <- factor(sub@active.ident, levels = rev(c("mcTEC T", "cTEC T", "mTECI T", "mTECII T", "Epi. Basal B", "BTP L", "Epi. Basal E")))
+
+# ---- DotPlot for IFN Alpha/Beta Signaling ----
+pathway1 <- "REACTOME_INTERFERON_ALPHA_BETA_SIGNALING"
+genes <- pathway_key %>% filter(pathway == pathway1) %>% pull(genes)
+
+df <- DotPlot(sub, features = genes)$data
+df <- df %>% filter(id == "mTECI T") %>% arrange(desc(pct.exp))
+
+plt1 <- DotPlot(sub, features = df$features.plot, cols = c("white", "darkred")) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  )
+plt1
+
+# ---- DotPlot for IFN Gamma Signaling ----
+pathway2 <- "REACTOME_INTERFERON_GAMMA_SIGNALING"
+genes <- pathway_key %>% filter(pathway == pathway2) %>% pull(genes)
+
+df <- DotPlot(sub, features = genes)$data
+df <- df %>% filter(id == "mTECII T") %>% arrange(desc(pct.exp))
+
+plt2 <- DotPlot(sub, features = df$features.plot, cols = c("white", "darkred")) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  )
+plt2
