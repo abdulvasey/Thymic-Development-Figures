@@ -1,0 +1,116 @@
+# libraries
+library(DESeq2)
+library(tidyverse)
+library(readxl)
+library(RColorBrewer)
+library(pheatmap)
+library(gridExtra)
+
+# TPM: load, collapse to gene-level, filter low expression
+tpm <- read_tsv("salmon.merged.gene_tpm.tsv") %>%
+  select(-gene_name) %>%
+  mutate(Gene_Name = sub("_.*", "", gene_id)) %>%
+  group_by(Gene_Name) %>%
+  summarise(across(starts_with("ZE"), sum), .groups = 'drop') %>%
+  filter(if_any(-Gene_Name, ~ . >= 5)) %>%
+  column_to_rownames('Gene_Name')
+
+# counts: load, collapse, round, match TPM
+df <- read_tsv("deseq2_star_salmon_length_scaled_counts.tsv") %>%
+  mutate(Gene_Name = sub("_.*", "", gene_id)) %>%
+  group_by(Gene_Name) %>%
+  summarise(across(starts_with("ZE"), sum), .groups = 'drop') %>%
+  column_to_rownames('Gene_Name') %>%
+  round() %>%
+  filter(rownames(.) %in% rownames(tpm))
+
+# adding experiment metadata
+meta <- read_excel("meta.xlsx") %>%
+  mutate(
+    Run  = as.character(Run),
+    cond = factor(cond, levels = c('No IFN','IFNa','IFNg','IFNa + IFNg'))
+  )
+
+# DESeq2 + VST
+dds     <- DESeqDataSetFromMatrix(df, colData = meta, design = ~ Run + cond)
+dds     <- DESeq(dds)
+vsd_mat <- assay(vst(dds, blind = TRUE))
+
+# per-condition means & z-score
+group_means <- sapply(levels(meta$cond), function(g)
+  rowMeans(vsd_mat[, meta$cond == g, drop = FALSE])
+)
+colnames(group_means) <- levels(meta$cond)
+z_scores <- t(scale(t(group_means)))
+
+# TEC marker genes (this is the 'marks' df from Fig. 1F)
+tecdf    <- readRDS("epithelial differential DF.RDS")
+# Filtering for the genes upregulated in Thymus (T)
+tecgenes <- tecdf %>% filter(avg_log2FC > 0.5, cluster == 'T') %>% pull(gene) %>% head(200)
+
+# all significant genes, will add an asterisk to all genes that are differentially upregulated on heatmaps
+sig <- unique(c(
+  rownames(subset(as.data.frame(results(dds, contrast = c('cond','IFNa + IFNg','No IFN'))),
+                  padj < 0.05 & log2FoldChange > 0)),
+  rownames(subset(as.data.frame(results(dds, contrast = c('cond','IFNa','No IFN'))),
+                  padj < 0.05 & log2FoldChange > 0)),
+  rownames(subset(as.data.frame(results(dds, contrast = c('cond','IFNg','No IFN'))),
+                  padj < 0.05 & log2FoldChange > 0))
+))
+
+# heatmap 1: TEC genes
+genes1 <- intersect(tecgenes, rownames(z_scores))[1:90]
+labs1  <- map(genes1, ~ if (.x %in% sig) bquote(italic(.(.x)) * "*") else bquote(italic(.(.x)))
+)
+p1 <- pheatmap(
+  z_scores[genes1, ],
+  color         = colorRampPalette(c('grey','white','darkred'))(100),
+  cluster_rows  = TRUE,
+  cluster_cols  = FALSE,
+  labels_row    = as.expression(labs1),
+  labels_col    = levels(meta$cond),
+  fontsize_row  = 12,
+  fontsize_col  = 14,
+  legend        = FALSE,
+  border_color  = NA
+)
+
+# helper to load GMT
+read_gmt <- function(path) {
+  read_lines(path) %>%
+    tibble(line = .) %>%
+    separate(line, into = c('pathway','url','genes'), sep = '\t', extra = 'merge') %>%
+    select(-url) %>%
+    mutate(genes = str_split(genes, '\t')) %>%
+    unnest(genes)
+}
+
+# gene sets
+gmt_url       <- 'https://data.broadinstitute.org/gsea-msigdb/msigdb/release/7.5/c2.cp.v7.5.symbols.gmt'
+gene_sets     <- read_gmt(gmt_url) %>% group_by(pathway) %>% summarise(genes = list(genes)) %>% deframe()
+
+# function for gene-set heatmap
+plot_set <- function(set_name) {
+  gs   <- intersect(gene_sets[[set_name]], rownames(z_scores))
+  labs <- map(gs, ~ if (.x %in% sig) bquote(italic(.(.x)) * "*") else bquote(italic(.(.x)))
+  )
+  pheatmap(
+    z_scores[gs, ],
+    color         = colorRampPalette(c('grey','white','darkred'))(100),
+    cluster_rows  = TRUE,
+    cluster_cols  = FALSE,
+    labels_row    = as.expression(labs),
+    labels_col    = levels(meta$cond),
+    fontsize_row  = 12,
+    fontsize_col  = 14,
+    legend        = FALSE,
+    border_color  = NA
+  )
+}
+
+# heatmaps 2 & 3
+p2 <- plot_set('KEGG_PROTEASOME')
+p3 <- plot_set('KEGG_ANTIGEN_PROCESSING_AND_PRESENTATION')
+
+# combine and save
+combined <- grid.arrange(p1[[4]], p2[[4]], p3[[4]], ncol = 3)
