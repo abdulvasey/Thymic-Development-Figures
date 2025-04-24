@@ -1,0 +1,126 @@
+# libraries
+library(DESeq2)
+library(tidyverse)
+library(readxl)
+library(fgsea)
+
+# TPM preprocessing, group_by step is to tabulate transcript variants under gene name
+# ex. GAPDH + GAPDH_1 = GAPDH
+tpm <- read_tsv("…/salmon.merged.gene_tpm.tsv") %>%
+  select(-gene_name) %>%
+  mutate(Gene_Name = sub("_.*", "", gene_id)) %>%
+  group_by(Gene_Name) %>%
+  summarise(across(starts_with("ZE"), sum), .groups = "drop") %>%
+  filter(if_any(-Gene_Name, ~ . >= 1)) %>%
+  column_to_rownames("Gene_Name")
+
+# count preprocessing, filtering genes that meet TPM threshold
+df <- read_tsv("…/deseq2_star_salmon_length_scaled_counts.tsv") %>% 
+  as.data.frame() %>%
+  mutate(Gene_Name = sub("_.*", "", gene_id)) %>%
+  group_by(Gene_Name) %>%
+  summarise(across(starts_with("ZE"), sum), .groups = "drop") %>%
+  column_to_rownames("Gene_Name") %>%
+  round() %>%
+  filter(rownames(.) %in% rownames(tpm))
+
+# metadata
+meta <- read_excel("…/meta.xlsx")
+
+# DESeq2 run
+dds <- DESeqDataSetFromMatrix(df, colData = meta, design = ~ Run + cond)
+dds <- DESeq(dds)
+vsdata <- vst(dds, blind = FALSE)
+
+# prepare ranks for IFNg vs No IFN
+cont <- results(dds, contrast = c("cond","IFNg","No IFN")) %>% 
+  as.data.frame() %>%
+  rownames_to_column("SYMBOL") %>%
+  select(SYMBOL, stat) %>%
+  drop_na() %>%
+  distinct() %>%
+  group_by(SYMBOL) %>%
+  summarise(stat = mean(stat))
+ranks <- deframe(cont)
+
+# GMT loader
+read_gmt <- function(path) {
+  read_lines(path) %>%
+    tibble(line = .) %>%
+    separate(line, into = c("pathway","url","genes"), sep = "\t", extra = "merge") %>%
+    select(-url) %>%
+    mutate(genes = str_split(genes, "\t")) %>%
+    unnest(genes)
+}
+
+# load gene sets
+gmt_url <- "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/7.5/c2.cp.v7.5.symbols.gmt"
+gene_sets <- read_gmt(gmt_url) %>% 
+  group_by(pathway) %>% 
+  summarise(genes = list(genes)) %>% 
+  deframe()
+
+# run GSEA per condition
+samples <- c("IFNg","IFNa","IFNa + IFNg")
+all_fgsea <- map(samples, function(s) {
+  res <- results(dds, contrast = c("cond", s, "No IFN")) %>%
+    as.data.frame() %>%
+    subset(padj < 0.05) %>%
+    rownames_to_column("SYMBOL") %>%
+    select(SYMBOL, stat) %>%
+    drop_na() %>%
+    distinct() %>%
+    group_by(SYMBOL) %>%
+    summarise(stat = mean(stat)) %>%
+    deframe()
+  fgseaMultilevel(gene_sets, res) %>%
+    as_tibble() %>%
+    arrange(desc(NES)) %>%
+    mutate(sample = s)
+}) %>% bind_rows()
+
+# select & clean pathways
+pathways <- c(
+  "REACTOME_CYTOKINE_SIGNALING_IN_IMMUNE_SYSTEM",
+  "KEGG_ANTIGEN_PROCESSING_AND_PRESENTATION",
+  "REACTOME_ANTIGEN_PROCESSING_CROSS_PRESENTATION",
+  "REACTOME_CLASS_I_MHC_MEDIATED_ANTIGEN_PROCESSING_PRESENTATION",
+  "REACTOME_ADAPTIVE_IMMUNE_SYSTEM",
+  "REACTOME_ANTIVIRAL_MECHANISM_BY_IFN_STIMULATED_GENES",
+  "REACTOME_TCR_SIGNALING",
+  "REACTOME_INNATE_IMMUNE_SYSTEM",
+  "REACTOME_INTERLEUKIN_1_FAMILY_SIGNALING",
+  "REACTOME_INTERLEUKIN_1_SIGNALING",
+  "REACTOME_FCERI_MEDIATED_NF_KB_ACTIVATION",
+  "KEGG_PROTEASOME",
+  "REACTOME_TNFR2_NON_CANONICAL_NF_KB_PATHWAY"
+)
+
+plot_data <- all_fgsea %>%
+  filter(pathway %in% pathways) %>%
+  mutate(
+    logP    = -log10(padj),
+    sample  = factor(sample, levels = samples),
+    pathway = pathway %>%
+      str_remove_all("^(KEGG_|REACTOME_)") %>%
+      str_replace_all("_", " ") %>%
+      str_replace("INTERFERON", "IFN") %>%
+      str_replace("INTERLEUKIN 1", "IL-1") %>%
+      str_replace("SIGNALING", "SIGNAL.") %>%
+      str_replace("CLASS I MHC MEDIATED", "MHC-1 MEDIATED")
+  ) %>%
+  arrange(logP) %>%
+  mutate(pathway = factor(pathway, levels = rev(unique(pathway))))
+
+# dot plot
+plt <- ggplot(plot_data, aes(sample, pathway)) +
+  geom_point(aes(size = logP, color = NES)) +
+  scale_color_gradient(low = "white", high = "darkred") +
+  scale_size(range = c(1,10), guide = guide_legend(title = "-log10(p)")) +
+  labs(x = "Sample", y = "Gene Set", color = "NES") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom")
+
+print(plt)
+ggsave("…/GSEA.png", plot = plt, height = 4, width = 7.5)
