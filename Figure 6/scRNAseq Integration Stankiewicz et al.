@@ -3,7 +3,7 @@
 library(Seurat)
 library(tidyverse)
 
-# Base directory where your data is located
+# Base directory containing cellranger outputs of each sample
 base_dir <- "/10xMultiome_2024/Rossi_Thymus"
 
 # Metadata mapping
