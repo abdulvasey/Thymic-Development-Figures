@@ -30,7 +30,7 @@ srt@meta.data <- srt@meta.data %>%
   rownames_to_column("barcode") %>% 
   dplyr::select(barcode:age) %>% 
   left_join(meta %>% dplyr::select(barcode, cellType, type_age, macro, cellType_macro)) %>% 
-  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo"))) %>%
+  mutate(age = factor(age, levels = c("6w","7w","16w","17w","18w","3mo","10mo"))) %>%
   column_to_rownames("barcode")
 
 srt <- SetIdent(srt, value = srt@meta.data$cellType)
