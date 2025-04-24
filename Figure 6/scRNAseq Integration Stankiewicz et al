@@ -101,3 +101,6 @@ srt <- RenameIdents(srt,
                     '53' = 'TECmyo/neuro'
 )
 
+#save object
+saveRDS(srt,'RNA.RDS')
+
